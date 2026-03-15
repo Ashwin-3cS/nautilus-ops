@@ -1,0 +1,45 @@
+[package]
+name = "nautilus-sidecar"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "nautilus-sidecar"
+path = "src/main.rs"
+
+[dependencies]
+# Ed25519 keypair generation & signing
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+rand = "0.8"
+
+# VSOCK socket support (Linux only — the nitro enclave IS Linux)
+vsock = "0.4"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Error handling
+anyhow = "1"
+thiserror = "1"
+
+# Hex encoding for pretty-printing PCRs & pubkeys
+hex = "0.4"
+
+# Terminal colors
+colored = "2"
+
+# Timestamp in attestation envelope
+chrono = { version = "0.4", features = ["serde"] }
+
+# AWS Nitro Secure Module API — only available on the enclave OS (Amazon Linux)
+# Gate behind a feature flag so the crate compiles on dev machines for unit tests.
+[target.'cfg(target_os = "linux")'.dependencies]
+aws-nitro-enclaves-nsm-api = { version = "0.4", optional = true }
+
+[features]
+# Enable this feature when building for deployment inside an actual Nitro Enclave.
+nsm = ["aws-nitro-enclaves-nsm-api"]
+
+[dev-dependencies]
+tempfile = "3"
