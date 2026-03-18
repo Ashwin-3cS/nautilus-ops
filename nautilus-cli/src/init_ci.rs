@@ -98,9 +98,10 @@ jobs:
           host: ${{{{ secrets.TEE_EC2_HOST }}}}
           username: ${{{{ secrets.TEE_EC2_USER }}}}
           key: ${{{{ secrets.TEE_EC2_SSH_KEY }}}}
-          source: "."
+          source: "Containerfile,src,Cargo.toml,Cargo.lock,Makefile,.gitignore"
           target: "~/nautilus-app/"
           overwrite: true
+          rm: false
 
       # ── Setup EC2 + build + deploy (all on EC2) ──────────────────────
       - name: Setup, Build and Deploy on EC2
@@ -157,23 +158,19 @@ jobs:
             cd ~/nautilus-app
             mkdir -p out
 
-            # Run docker with sg ne group context
+            # The Containerfile builds the EIF internally via eif_build.
+            # We extract it with --output (NOT nitro-cli build-enclave).
             sudo docker build \
-              --tag local/enclaveos:{sha} \
               --platform linux/amd64 \
               --progress=plain \
+              --output type=local,dest=out/ \
               -f {dockerfile} \
               . 2>&1 | tee out/docker.log
 
-            sudo nitro-cli build-enclave \
-              --docker-uri local/enclaveos:{sha} \
-              --output-file out/nautilus.eif \
-              2>&1 | tee out/build.log
-
-            # Extract PCRs
-            grep '^{{' out/build.log | tail -1 > out/nautilus.pcrs.json || true
+            echo "=== EIF built ==="
+            ls -lh out/
             echo "=== PCR Measurements ==="
-            cat out/nautilus.pcrs.json || true
+            cat out/nitro.pcrs || true
 
             # ── Terminate old enclave and start new one ───────────────
             echo "=== Terminating existing enclaves ==="
@@ -183,32 +180,38 @@ jobs:
             sudo nitro-cli run-enclave \
               --cpu-count {cpu} \
               --memory {mem} \
-              --eif-path ~/nautilus-app/out/nautilus.eif
+              --eif-path ~/nautilus-app/out/nitro.eif
 
             echo "=== Running enclaves ==="
             sudo nitro-cli describe-enclaves
+            sudo nitro-cli describe-enclaves | jq -r '.[0] | "  CID: \(.EnclaveCID)  State: \(.State)"'
 
-            # ── Start VSOCK bridge (restart if already running) ───────
-            echo "=== Starting VSOCK bridge ==="
-            pkill -f "socat.*VSOCK" || true
-            sleep 1
+            # ── Setup persistent VSOCK bridge via systemd ─────────────
+            echo "=== Setting up VSOCK bridge ==="
             ENCLAVE_CID=$(sudo nitro-cli describe-enclaves | jq -r '.[0].EnclaveCID')
-            nohup socat TCP-LISTEN:4000,reuseaddr,fork VSOCK-CONNECT:${{ENCLAVE_CID}}:4000 \
-              > /tmp/vsock-bridge.log 2>&1 &
-            nohup socat VSOCK-LISTEN:5000,reuseaddr,fork \
-              OPEN:/tmp/enclave.log,creat,append \
-              > /dev/null 2>&1 &
+
+            printf '[Unit]\nDescription=Nautilus VSOCK Bridge\nAfter=network.target\n\n[Service]\nExecStart=/usr/bin/socat TCP-LISTEN:4000,reuseaddr,fork VSOCK-CONNECT:%s:4000\nRestart=always\nRestartSec=2\n\n[Install]\nWantedBy=multi-user.target\n' "$ENCLAVE_CID" \
+              | sudo tee /etc/systemd/system/nautilus-bridge.service > /dev/null
+
+            touch /tmp/enclave.log
+            printf '[Unit]\nDescription=Nautilus Log Collector\nAfter=network.target\n\n[Service]\nExecStart=/usr/bin/socat VSOCK-LISTEN:5000,fork,reuseaddr OPEN:/tmp/enclave.log,creat,append\nRestart=always\nRestartSec=2\n\n[Install]\nWantedBy=multi-user.target\n' \
+              | sudo tee /etc/systemd/system/nautilus-logs.service > /dev/null
+
+            sudo systemctl daemon-reload
+            sudo systemctl enable nautilus-bridge.service nautilus-logs.service
+            sudo systemctl restart nautilus-bridge.service
+            sudo systemctl restart nautilus-logs.service
+
+            # Wait for service to fully start before checking
+            sleep 3
+            sudo systemctl is-active nautilus-bridge.service || true
 
             echo ""
-            echo "✔ Deployment complete."
-            echo "  Enclave CID: ${{ENCLAVE_CID}}"
-            echo "  Test: curl http://$(curl -s ifconfig.me):4000/health"
-            echo "  Sign: curl -X POST http://$(curl -s ifconfig.me):4000/sign_name -H 'Content-Type: application/json' -d '{{\"name\":\"Ashwin\"}}'"
+            echo "Deployment complete. Bridge active: CID=$ENCLAVE_CID TCP:4000 → VSOCK:4000"
 "#,
         dockerfile = dockerfile,
         cpu = cpu,
         mem = mem,
-        sha = "${{ github.sha }}",
     )
 }
 
