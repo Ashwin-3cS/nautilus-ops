@@ -187,6 +187,13 @@ jobs:
             sudo nitro-cli describe-enclaves | jq -r '.[0] | "  CID: \(.EnclaveCID)  State: \(.State)"'
 
             # ── Setup persistent VSOCK bridge via systemd ─────────────
+            # Kill any stale socat (from manual runs or previous deploys)
+            sudo pkill -f "socat.*4000" 2>/dev/null || true
+            sudo pkill -f "socat.*5000" 2>/dev/null || true
+            sudo systemctl stop nautilus-bridge.service 2>/dev/null || true
+            sudo systemctl stop nautilus-logs.service 2>/dev/null || true
+            sleep 1
+
             echo "=== Setting up VSOCK bridge ==="
             ENCLAVE_CID=$(sudo nitro-cli describe-enclaves | jq -r '.[0].EnclaveCID')
 
