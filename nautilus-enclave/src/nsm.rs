@@ -1,4 +1,4 @@
-// nautilus-sidecar/src/nsm.rs
+// nautilus-enclave/src/nsm.rs
 //
 // Wrapper around the AWS Nitro Secure Module (NSM) API.
 // When the `nsm` feature is enabled (real enclave), this calls the NSM device.

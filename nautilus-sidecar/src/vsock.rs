@@ -16,8 +16,8 @@ use colored::Colorize;
 use serde::Serialize;
 use std::io::{Read, Write};
 
-use crate::crypto::EnclaveKeyPair;
-use crate::nsm;
+use nautilus_enclave::EnclaveKeyPair;
+use nautilus_enclave as nsm;
 
 /// VSOCK port the sidecar listens on.
 const VSOCK_PORT: u32 = 5000;
@@ -179,7 +179,7 @@ mod tests {
             .try_into()
             .unwrap();
 
-        assert!(crate::crypto::verify_signature(&pub_bytes, payload, &sig_bytes).is_ok());
+        assert!(nautilus_enclave::verify_signature(&pub_bytes, payload, &sig_bytes).is_ok());
     }
 
     #[test]

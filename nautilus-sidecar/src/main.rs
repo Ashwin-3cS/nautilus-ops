@@ -10,13 +10,11 @@
 //      - GET_ATTESTATION (0x01) → ask NSM to include our pubkey, return JSON envelope.
 //      - SIGN (0x02)            → sign an arbitrary payload with our private key.
 
-mod crypto;
-mod nsm;
 mod vsock;
 
 use anyhow::Result;
 use colored::Colorize;
-use crypto::EnclaveKeyPair;
+use nautilus_enclave::EnclaveKeyPair;
 
 fn main() -> Result<()> {
     eprintln!("{}", "Nautilus Enclave Sidecar".bold().cyan());

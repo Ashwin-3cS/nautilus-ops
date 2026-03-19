@@ -1,19 +1,21 @@
-// nautilus-sidecar/src/crypto.rs
+// nautilus-enclave/src/crypto.rs
 //
-// Ed25519 keypair generation and signing helpers.
+// Ed25519 keypair generation and signing helpers for Nitro Enclaves.
 
 use anyhow::{Context, Result};
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use rand::rngs::OsRng;
 
 /// A freshly-generated Ed25519 keypair that lives for the lifetime of the enclave.
+///
+/// Inside a real Nitro Enclave, `OsRng` is backed by the NSM entropy source.
+/// Outside an enclave (dev/test), it uses the OS default CSPRNG.
 pub struct EnclaveKeyPair {
     signing_key: SigningKey,
 }
 
 impl EnclaveKeyPair {
-    /// Generate a new random Ed25519 keypair using OS randomness (provided by
-    /// the NSM entropy source inside the enclave).
+    /// Generate a new random Ed25519 keypair using OS randomness.
     pub fn generate() -> Self {
         let signing_key = SigningKey::generate(&mut OsRng);
         Self { signing_key }
@@ -60,7 +62,6 @@ mod tests {
     fn test_generate_produces_unique_keypairs() {
         let kp1 = EnclaveKeyPair::generate();
         let kp2 = EnclaveKeyPair::generate();
-        // Vanishingly unlikely to be equal, but ensures generate() actually runs.
         assert_ne!(kp1.public_key_bytes(), kp2.public_key_bytes());
     }
 
@@ -82,7 +83,6 @@ mod tests {
         let sig_bytes: [u8; 64] = sig.to_bytes();
         let pub_bytes = kp.public_key_bytes();
 
-        // Different payload — must fail
         assert!(verify_signature(&pub_bytes, b"tampered payload", &sig_bytes).is_err());
     }
 
@@ -96,7 +96,6 @@ mod tests {
         let sig_bytes: [u8; 64] = sig.to_bytes();
         let wrong_pub = kp2.public_key_bytes();
 
-        // Signed with kp1, verifying with kp2 — must fail
         assert!(verify_signature(&wrong_pub, payload, &sig_bytes).is_err());
     }
 }

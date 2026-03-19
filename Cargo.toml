@@ -1,5 +1,5 @@
 [workspace]
-members = ["nautilus-cli", "nautilus-sidecar"]
+members = ["nautilus-cli", "nautilus-enclave", "nautilus-sidecar"]
 resolver = "2"
 
 [workspace.package]

@@ -1637,20 +1637,29 @@ dependencies = [
 ]
 
 [[package]]
-name = "nautilus-sidecar"
+name = "nautilus-enclave"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "aws-nitro-enclaves-nsm-api",
  "chrono",
- "colored",
  "ed25519-dalek",
  "hex",
  "rand",
  "serde",
  "serde_json",
- "tempfile",
- "thiserror",
+]
+
+[[package]]
+name = "nautilus-sidecar"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "colored",
+ "hex",
+ "nautilus-enclave",
+ "serde",
+ "serde_json",
  "vsock",
 ]
 

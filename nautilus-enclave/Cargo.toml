@@ -1,0 +1,32 @@
+[package]
+name = "nautilus-enclave"
+version.workspace = true
+edition.workspace = true
+description = "Enclave crypto and attestation primitives for AWS Nitro Enclaves"
+
+[dependencies]
+# Ed25519 keypair generation & signing
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+rand = "0.8"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Error handling
+anyhow = "1"
+
+# Hex encoding for PCRs & pubkeys
+hex = "0.4"
+
+# Timestamp in attestation envelope
+chrono = { version = "0.4", features = ["serde"] }
+
+# AWS Nitro Secure Module API — only available inside a real enclave.
+# Gate behind a feature flag so the crate compiles on dev machines.
+[target.'cfg(target_os = "linux")'.dependencies]
+aws-nitro-enclaves-nsm-api = { version = "0.4", optional = true }
+
+[features]
+# Enable when building for deployment inside an actual Nitro Enclave.
+nsm = ["aws-nitro-enclaves-nsm-api"]
