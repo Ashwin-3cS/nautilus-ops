@@ -60,9 +60,9 @@ fn get_attestation_real(
     anyhow::ensure!(nsm_fd >= 0, "Failed to open NSM device (fd={}). Are you running inside a Nitro Enclave?", nsm_fd);
 
     let request = Request::Attestation {
-        user_data: Some(public_key.to_vec().into()),
-        nonce: if nonce.is_empty() { None } else { Some(nonce.to_vec().into()) },
-        public_key: None,
+        user_data: if nonce.is_empty() { None } else { Some(nonce.to_vec().into()) },
+        nonce: None,
+        public_key: Some(public_key.to_vec().into()),
     };
 
     let response = driver::nsm_process_request(nsm_fd, request);
