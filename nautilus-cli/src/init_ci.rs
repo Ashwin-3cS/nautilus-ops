@@ -108,113 +108,119 @@ jobs:
           rm: false
 
       # ── Setup EC2 + build + deploy (all on EC2) ──────────────────────
+      # Uses raw ssh instead of appleboy/ssh-action to avoid SIGTERM bug
       - name: Setup, Build and Deploy on EC2
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{{{ secrets.TEE_EC2_HOST }}}}
-          username: ${{{{ secrets.TEE_EC2_USER }}}}
-          key: ${{{{ secrets.TEE_EC2_SSH_KEY }}}}
-          command_timeout: 30m
-          script: |
-            set -e
+        env:
+          EC2_HOST: ${{{{ secrets.TEE_EC2_HOST }}}}
+          EC2_USER: ${{{{ secrets.TEE_EC2_USER }}}}
+          EC2_KEY: ${{{{ secrets.TEE_EC2_SSH_KEY }}}}
+        run: |
+          echo "$EC2_KEY" > /tmp/deploy_key && chmod 600 /tmp/deploy_key
+          ssh -o StrictHostKeyChecking=no \
+              -o ServerAliveInterval=30 \
+              -o ServerAliveCountMax=10 \
+              -i /tmp/deploy_key "$EC2_USER@$EC2_HOST" 'bash -s' << 'DEPLOY'
+          set -e
 
-            # ── Install Docker if missing ─────────────────────────────
-            if ! command -v docker &> /dev/null; then
-              echo "=== Installing Docker ==="
-              sudo yum update -y
-              sudo amazon-linux-extras install docker -y || \
-                (curl -fsSL https://get.docker.com | sudo sh)
-              sudo systemctl start docker
-              sudo systemctl enable docker
-              sudo usermod -aG docker $USER
-              echo "Docker installed."
-            else
-              echo "Docker already installed: $(docker --version)"
-            fi
+          # ── Install Docker if missing ─────────────────────────────
+          if ! command -v docker &> /dev/null; then
+            echo "=== Installing Docker ==="
+            sudo yum update -y
+            sudo amazon-linux-extras install docker -y || \
+              (curl -fsSL https://get.docker.com | sudo sh)
+            sudo systemctl start docker
+            sudo systemctl enable docker
+            sudo usermod -aG docker $USER
+            echo "Docker installed."
+          else
+            echo "Docker already installed: $(docker --version)"
+          fi
 
-            # ── Install nitro-cli if missing ──────────────────────────
-            if ! command -v nitro-cli &> /dev/null; then
-              echo "=== Installing nitro-cli ==="
-              sudo amazon-linux-extras install aws-nitro-enclaves-cli -y
-              sudo yum install -y aws-nitro-enclaves-cli-devel
-              sudo usermod -aG ne $USER
-              echo "nitro-cli installed."
-            else
-              echo "nitro-cli already installed: $(nitro-cli --version)"
-            fi
+          # ── Install nitro-cli if missing ──────────────────────────
+          if ! command -v nitro-cli &> /dev/null; then
+            echo "=== Installing nitro-cli ==="
+            sudo amazon-linux-extras install aws-nitro-enclaves-cli -y
+            sudo yum install -y aws-nitro-enclaves-cli-devel
+            sudo usermod -aG ne $USER
+            echo "nitro-cli installed."
+          else
+            echo "nitro-cli already installed: $(nitro-cli --version)"
+          fi
 
-            # ── Configure enclave allocator if not already set ────────
-            ALLOC=/etc/nitro_enclaves/allocator.yaml
-            if ! grep -q "memory_mib: {mem}" "$ALLOC" 2>/dev/null; then
-              echo "=== Configuring enclave allocator ==="
-              sudo sed -i "s/memory_mib:.*/memory_mib: {mem}/" "$ALLOC" || true
-              sudo sed -i "s/cpu_count:.*/cpu_count: {cpu}/" "$ALLOC" || true
-              sudo systemctl restart nitro-enclaves-allocator.service || true
-              sudo systemctl enable nitro-enclaves-allocator.service || true
-            fi
+          # ── Configure enclave allocator if not already set ────────
+          ALLOC=/etc/nitro_enclaves/allocator.yaml
+          if ! grep -q "memory_mib: {mem}" "$ALLOC" 2>/dev/null; then
+            echo "=== Configuring enclave allocator ==="
+            sudo sed -i "s/memory_mib:.*/memory_mib: {mem}/" "$ALLOC" || true
+            sudo sed -i "s/cpu_count:.*/cpu_count: {cpu}/" "$ALLOC" || true
+            sudo systemctl restart nitro-enclaves-allocator.service || true
+            sudo systemctl enable nitro-enclaves-allocator.service || true
+          fi
 
-            # ── Install socat + jq if missing ─────────────────────────
-            command -v socat &> /dev/null || sudo yum install -y socat
-            command -v jq    &> /dev/null || sudo yum install -y jq
+          # ── Install socat + jq if missing ─────────────────────────
+          command -v socat &> /dev/null || sudo yum install -y socat
+          command -v jq    &> /dev/null || sudo yum install -y jq
 
-            # ── Build the EIF on EC2 ──────────────────────────────────
-            echo "=== Building Enclave Image ==="
-            cd ~/nautilus-app
-            mkdir -p out
+          # ── Build the EIF on EC2 ──────────────────────────────────
+          echo "=== Building Enclave Image ==="
+          cd ~/nautilus-app
+          mkdir -p out
 
-            # The Containerfile builds the EIF internally via eif_build.
-            # We extract it with --output (NOT nitro-cli build-enclave).
-            sudo docker build \
-              --platform linux/amd64 \
-              --progress=plain \
-              --output type=local,dest=out/ \
-              -f {dockerfile} \
-              . 2>&1 | tee out/docker.log
+          # The Containerfile builds the EIF internally via eif_build.
+          # We extract it with --output (NOT nitro-cli build-enclave).
+          sudo docker build \
+            --platform linux/amd64 \
+            --progress=plain \
+            --output type=local,dest=out/ \
+            -f {dockerfile} \
+            . 2>&1 | tee out/docker.log
 
-            echo "=== EIF built ==="
-            ls -lh out/
-            echo "=== PCR Measurements ==="
-            cat out/nitro.pcrs || true
+          echo "=== EIF built ==="
+          ls -lh out/
+          echo "=== PCR Measurements ==="
+          cat out/nitro.pcrs || true
 
-            # ── Kill stale bridge + terminate old enclave ────────────
-            sudo pkill -f "socat.*4000" 2>/dev/null || true
-            sudo pkill -f "socat.*5000" 2>/dev/null || true
-            sudo systemctl stop nautilus-bridge.service 2>/dev/null || true
-            sudo systemctl stop nautilus-logs.service 2>/dev/null || true
+          # ── Kill stale bridge + terminate old enclave ────────────
+          sudo pkill -f "socat.*4000" 2>/dev/null || true
+          sudo pkill -f "socat.*5000" 2>/dev/null || true
+          sudo systemctl stop nautilus-bridge.service 2>/dev/null || true
+          sudo systemctl stop nautilus-logs.service 2>/dev/null || true
 
-            echo "=== Terminating existing enclaves ==="
-            sudo nitro-cli terminate-enclave --all || true
+          echo "=== Terminating existing enclaves ==="
+          sudo nitro-cli terminate-enclave --all || true
 
-            echo "=== Starting new enclave ==="
-            sudo nitro-cli run-enclave \
-              --cpu-count {cpu} \
-              --memory {mem} \
-              --eif-path ~/nautilus-app/out/nitro.eif
+          echo "=== Starting new enclave ==="
+          sudo nitro-cli run-enclave \
+            --cpu-count {cpu} \
+            --memory {mem} \
+            --eif-path ~/nautilus-app/out/nitro.eif
 
-            echo "=== Running enclaves ==="
-            sudo nitro-cli describe-enclaves
-            sudo nitro-cli describe-enclaves | jq -r '.[0] | "  CID: \(.EnclaveCID)  State: \(.State)"'
+          echo "=== Running enclaves ==="
+          sudo nitro-cli describe-enclaves
+          sudo nitro-cli describe-enclaves | jq -r '.[0] | "  CID: \(.EnclaveCID)  State: \(.State)"'
 
-            # ── Setup persistent VSOCK bridge via systemd ─────────────
-            echo "=== Setting up VSOCK bridge ==="
-            ENCLAVE_CID=$(sudo nitro-cli describe-enclaves | jq -r '.[0].EnclaveCID')
+          # ── Setup persistent VSOCK bridge via systemd ─────────────
+          echo "=== Setting up VSOCK bridge ==="
+          ENCLAVE_CID=$(sudo nitro-cli describe-enclaves | jq -r '.[0].EnclaveCID')
 
-            printf '[Unit]\nDescription=Nautilus VSOCK Bridge\nAfter=network.target\n\n[Service]\nExecStart=/usr/bin/socat TCP-LISTEN:4000,reuseaddr,fork VSOCK-CONNECT:%s:4000\nRestart=always\nRestartSec=2\n\n[Install]\nWantedBy=multi-user.target\n' "$ENCLAVE_CID" \
-              | sudo tee /etc/systemd/system/nautilus-bridge.service > /dev/null
+          printf '[Unit]\nDescription=Nautilus VSOCK Bridge\nAfter=network.target\n\n[Service]\nExecStart=/usr/bin/socat TCP-LISTEN:4000,reuseaddr,fork VSOCK-CONNECT:%s:4000\nRestart=always\nRestartSec=2\n\n[Install]\nWantedBy=multi-user.target\n' "$ENCLAVE_CID" \
+            | sudo tee /etc/systemd/system/nautilus-bridge.service > /dev/null
 
-            touch /tmp/enclave.log
-            printf '[Unit]\nDescription=Nautilus Log Collector\nAfter=network.target\n\n[Service]\nExecStart=/usr/bin/socat VSOCK-LISTEN:5000,fork,reuseaddr OPEN:/tmp/enclave.log,creat,append\nRestart=always\nRestartSec=2\n\n[Install]\nWantedBy=multi-user.target\n' \
-              | sudo tee /etc/systemd/system/nautilus-logs.service > /dev/null
+          touch /tmp/enclave.log
+          printf '[Unit]\nDescription=Nautilus Log Collector\nAfter=network.target\n\n[Service]\nExecStart=/usr/bin/socat VSOCK-LISTEN:5000,fork,reuseaddr OPEN:/tmp/enclave.log,creat,append\nRestart=always\nRestartSec=2\n\n[Install]\nWantedBy=multi-user.target\n' \
+            | sudo tee /etc/systemd/system/nautilus-logs.service > /dev/null
 
-            sudo systemctl daemon-reload
-            sudo systemctl enable nautilus-bridge.service nautilus-logs.service
-            sudo systemctl restart nautilus-bridge.service
-            sudo systemctl restart nautilus-logs.service
+          sudo systemctl daemon-reload
+          sudo systemctl enable nautilus-bridge.service nautilus-logs.service
+          sudo systemctl restart nautilus-bridge.service
+          sudo systemctl restart nautilus-logs.service
 
-            sleep 3
-            echo "=== Bridge status ==="
-            sudo systemctl is-active nautilus-bridge.service || true
-            echo "Bridge active: CID=$ENCLAVE_CID TCP:4000 → VSOCK:4000"
+          sleep 3
+          echo "=== Bridge status ==="
+          sudo systemctl is-active nautilus-bridge.service || true
+          echo "Bridge active: CID=$ENCLAVE_CID TCP:4000 -> VSOCK:4000"
+          DEPLOY
+          rm -f /tmp/deploy_key
 "#,
         dockerfile = dockerfile,
         cpu = cpu,
