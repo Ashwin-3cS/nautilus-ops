@@ -83,6 +83,10 @@ on:
   push:
     branches: [main]
 
+concurrency:
+  group: deploy-enclave
+  cancel-in-progress: true
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -204,11 +208,13 @@ jobs:
 
             sudo systemctl daemon-reload
             sudo systemctl enable nautilus-bridge.service nautilus-logs.service
+            sudo systemctl restart nautilus-bridge.service
+            sudo systemctl restart nautilus-logs.service
 
-            # Fire-and-forget: systemd-run delegates to PID 1, survives SIGTERM
-            sudo systemd-run --no-block systemctl restart nautilus-bridge.service
-            sudo systemd-run --no-block systemctl restart nautilus-logs.service
-            echo "Bridge setup dispatched for CID=$ENCLAVE_CID (runs independently of SSH)."
+            sleep 3
+            echo "=== Bridge status ==="
+            sudo systemctl is-active nautilus-bridge.service || true
+            echo "Bridge active: CID=$ENCLAVE_CID TCP:4000 → VSOCK:4000"
 "#,
         dockerfile = dockerfile,
         cpu = cpu,
