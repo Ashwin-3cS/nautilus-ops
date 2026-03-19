@@ -2,6 +2,8 @@
 
 Self-managed TEE orchestrator for AWS Nitro Enclaves on the Sui blockchain. Build enclave images, deploy them to EC2, register attestations on-chain, and verify enclave signatures — all from one CLI.
 
+> **Looking for the TEE application that runs inside the enclave?** See [nautilus-tee-app](https://github.com/Ashwin-3cS/nautilus-tee-app/) — the Axum sign-server with `/sign_name`, `/get_attestation`, and `/health` endpoints. This CLI orchestrates that application.
+
 ## Architecture
 
 ```
@@ -100,6 +102,8 @@ cargo install --path nautilus-cli --features "sui,aws"
 ## Quick Start — Full End-to-End Flow
 
 ### 1. Build the Enclave Image
+
+You need a TEE application to run inside the enclave. See [nautilus-tee-app](https://github.com/Ashwin-3cS/nautilus-tee-app/) for a reference implementation with signing and attestation endpoints.
 
 ```bash
 cd /path/to/your-tee-app
@@ -337,6 +341,12 @@ cargo test -p nautilus-sidecar
 | `NAUTILUS_CONFIG_ID` | `register-enclave`, `update-pcrs` | On-chain EnclaveConfig object ID |
 | `NAUTILUS_CAP_ID` | `register-enclave`, `update-pcrs` | On-chain Cap object ID |
 | `NAUTILUS_ENCLAVE_ID` | `verify-signature` | On-chain Enclave object ID |
+
+## Related Repositories
+
+| Repository | Description |
+|-----------|-------------|
+| [nautilus-tee-app](https://github.com/Ashwin-3cS/nautilus-tee-app/) | Reference TEE application — Axum sign-server with Ed25519 keygen, `/sign_name`, `/get_attestation`, and `/health` endpoints. Runs inside the Nitro Enclave. |
 
 ## License
 
