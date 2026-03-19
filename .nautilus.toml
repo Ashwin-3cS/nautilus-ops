@@ -1,0 +1,5 @@
+[sui]
+network = "testnet"
+package_id = "0x4a5174f8b528ad9197e69c606748e94cce4159ba345dcd261feee98a062b624c"
+config_object_id = "0xd325f52096553d2cccaeee76790ba53f5197e66fe522b2f80363075cfa94895e"
+cap_object_id = "0xf02242511dbc12ec9decbd00b571e40bb3d94cfe4b69099b62260a20260915d0"

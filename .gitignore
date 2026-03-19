@@ -1,1 +1,8 @@
 target
+contracts/nautilus/build
+
+
+# docs
+docs/technical_architecture.md
+handover.md
+MEMORY.md
