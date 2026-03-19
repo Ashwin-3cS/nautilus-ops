@@ -172,7 +172,12 @@ jobs:
             echo "=== PCR Measurements ==="
             cat out/nitro.pcrs || true
 
-            # ── Terminate old enclave and start new one ───────────────
+            # ── Kill stale bridge + terminate old enclave ────────────
+            sudo pkill -f "socat.*4000" 2>/dev/null || true
+            sudo pkill -f "socat.*5000" 2>/dev/null || true
+            sudo systemctl stop nautilus-bridge.service 2>/dev/null || true
+            sudo systemctl stop nautilus-logs.service 2>/dev/null || true
+
             echo "=== Terminating existing enclaves ==="
             sudo nitro-cli terminate-enclave --all || true
 
@@ -187,13 +192,6 @@ jobs:
             sudo nitro-cli describe-enclaves | jq -r '.[0] | "  CID: \(.EnclaveCID)  State: \(.State)"'
 
             # ── Setup persistent VSOCK bridge via systemd ─────────────
-            # Kill any stale socat (from manual runs or previous deploys)
-            sudo pkill -f "socat.*4000" 2>/dev/null || true
-            sudo pkill -f "socat.*5000" 2>/dev/null || true
-            sudo systemctl stop nautilus-bridge.service 2>/dev/null || true
-            sudo systemctl stop nautilus-logs.service 2>/dev/null || true
-            sleep 1
-
             echo "=== Setting up VSOCK bridge ==="
             ENCLAVE_CID=$(sudo nitro-cli describe-enclaves | jq -r '.[0].EnclaveCID')
 
@@ -206,15 +204,11 @@ jobs:
 
             sudo systemctl daemon-reload
             sudo systemctl enable nautilus-bridge.service nautilus-logs.service
-            sudo systemctl restart nautilus-bridge.service
-            sudo systemctl restart nautilus-logs.service
 
-            # Wait for service to fully start before checking
-            sleep 3
-            sudo systemctl is-active nautilus-bridge.service || true
-
-            echo ""
-            echo "Deployment complete. Bridge active: CID=$ENCLAVE_CID TCP:4000 → VSOCK:4000"
+            # Fire-and-forget: systemd-run delegates to PID 1, survives SIGTERM
+            sudo systemd-run --no-block systemctl restart nautilus-bridge.service
+            sudo systemd-run --no-block systemctl restart nautilus-logs.service
+            echo "Bridge setup dispatched for CID=$ENCLAVE_CID (runs independently of SSH)."
 "#,
         dockerfile = dockerfile,
         cpu = cpu,
