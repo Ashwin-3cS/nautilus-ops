@@ -27,9 +27,9 @@ pub struct RegisterEnclaveArgs {
     #[arg(long, env = "TEE_EC2_HOST")]
     pub host: String,
 
-    /// HTTP port of the sign-server (socat bridge to enclave).
-    #[arg(long, default_value = "4000")]
-    pub port: u16,
+    /// HTTP port of the enclave server. Default: 4000 (Rust), 3000 (TS).
+    #[arg(long)]
+    pub port: Option<u16>,
 
     /// Sui network (devnet, testnet, mainnet).
     #[arg(long, default_value = "testnet")]
@@ -105,11 +105,15 @@ pub struct VerifySignatureArgs {
     #[arg(long, env = "TEE_EC2_HOST")]
     pub host: String,
 
-    /// HTTP port of the sign-server.
-    #[arg(long, default_value = "4000")]
-    pub port: u16,
+    /// HTTP port of the enclave server. Default: 4000 (Rust), 3000 (TS).
+    #[arg(long)]
+    pub port: Option<u16>,
 
-    /// Name to sign (sent to the enclave's /sign_name endpoint).
+    /// Signing endpoint path on the enclave (default: /sign_name).
+    #[arg(long, default_value = "/sign_name")]
+    pub sign_endpoint: String,
+
+    /// Name to sign (sent to the enclave's sign endpoint).
     #[arg(long, default_value = "Nautilus")]
     pub name: String,
 
@@ -259,6 +263,7 @@ mod implementation {
         println!("{}", "─".repeat(40).dimmed());
 
         let config = NautilusConfig::load(None).unwrap_or_default();
+        let template = crate::config::resolve_template(None, &config)?;
 
         let package_id = resolve_id(&args.package_id, &config.sui.package_id, "package_id")?;
         let config_id = resolve_id(&args.config_object_id, &config.sui.config_object_id, "config_object_id")?;
@@ -283,7 +288,9 @@ mod implementation {
         }
 
         // 1. Fetch attestation document from enclave
-        let url = format!("http://{}:{}/get_attestation", args.host, args.port);
+        let port = args.port.unwrap_or_else(|| template.default_http_port());
+        let att_path = template.attestation_path();
+        let url = format!("http://{}:{}{}", args.host, port, att_path);
         println!("{} Fetching attestation from {}", "→".cyan(), url.cyan());
 
         let client = reqwest::Client::new();
@@ -489,10 +496,13 @@ mod implementation {
         println!("{}", "─".repeat(40).dimmed());
 
         let config = NautilusConfig::load(None).unwrap_or_default();
+        let template = crate::config::resolve_template(None, &config)?;
         let package_id = resolve_id(&args.package_id, &config.sui.package_id, "package_id")?;
 
-        // 1. Call /sign_name on the enclave
-        let url = format!("http://{}:{}/sign_name", args.host, args.port);
+        // 1. Call the sign endpoint on the enclave
+        let port = args.port.unwrap_or_else(|| template.default_http_port());
+        let endpoint = args.sign_endpoint.trim_start_matches('/');
+        let url = format!("http://{}:{}/{}", args.host, port, endpoint);
         println!("{} Calling {} with name \"{}\"", "→".cyan(), url.cyan(), args.name);
 
         let client = reqwest::Client::new();

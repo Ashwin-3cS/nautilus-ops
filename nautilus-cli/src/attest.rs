@@ -7,29 +7,22 @@ use std::net::TcpStream;
 use std::path::PathBuf;
 use std::time::Duration;
 
-/// Command sent over the host-side TCP-to-VSOCK proxy connection.
-/// The EC2 host runs a small forwarder that exposes the enclave VSOCK on a
-/// local TCP port via `socat VSOCK-LISTEN:5000,fork TCP4-CONNECT:127.0.0.1:15000`
-/// (or equivalent). This avoids needing raw VSOCK support on the developer
-/// machine while keeping the sidecar protocol unchanged.
+use crate::config::{self, Template};
+
+/// Command sent over the host-side TCP-to-VSOCK proxy connection (Rust template only).
 const CMD_GET_ATTESTATION: u8 = 0x01;
 
-/// The sidecar returns length-prefixed CBOR. For the `attest` sub-command we
-/// tell the sidecar to include a well-known nonce so the attestation doc is
-/// unique for each invocation.
 #[derive(Args, Debug)]
 pub struct AttestArgs {
     /// EC2 instance public hostname or IP (must be reachable from your machine).
     #[arg(long, env = "TEE_EC2_HOST")]
     pub host: String,
 
-    /// TCP port that is forwarded to the enclave VSOCK on the EC2 host.
-    /// Default matches the sidecar's VSOCK port (5000) exposed as TCP.
-    #[arg(long, default_value = "5000")]
-    pub port: u16,
+    /// TCP port. Rust default: 5000 (sidecar binary protocol). TS default: 3000 (HTTP).
+    #[arg(long)]
+    pub port: Option<u16>,
 
-    /// Optional nonce (hex) to embed in the attestation user-data field.
-    /// A random 32-byte nonce is used if not provided.
+    /// Optional nonce (hex) to embed in the attestation user-data field (Rust template only).
     #[arg(long)]
     pub nonce: Option<String>,
 
@@ -58,35 +51,46 @@ pub struct AttestationEnvelope {
 }
 
 pub async fn run(args: AttestArgs) -> Result<()> {
+    let cfg = config::NautilusConfig::load(None).unwrap_or_default();
+    let template = config::resolve_template(None, &cfg)?;
+
     println!("{}", "Nautilus Attestation Client".bold().cyan());
+    println!(
+        "{} Template: {}",
+        "→".cyan(),
+        template.to_string().cyan().bold()
+    );
     println!("{}", "─".repeat(40).dimmed());
 
-    let addr = format!("{}:{}", args.host, args.port);
-    println!(
-        "{} Connecting to enclave proxy at {}",
-        "→".cyan(),
-        addr.cyan()
-    );
+    match template {
+        Template::Rust => run_rust_attest(args).await,
+        Template::Ts => run_ts_attest(args).await,
+    }
+}
+
+/// Rust template: binary sidecar protocol over TCP (port 5000 default).
+async fn run_rust_attest(args: AttestArgs) -> Result<()> {
+    let port = args.port.unwrap_or(5000);
+    let addr = format!("{}:{}", args.host, port);
+    println!("{} Connecting to sidecar at {}", "→".cyan(), addr.cyan());
 
     let mut stream = TcpStream::connect(&addr)
         .with_context(|| format!(
             "Cannot reach enclave VSOCK proxy at {}.\n\
              Ensure the EC2 host is running and port {} is open (security group + socat forwarder).",
-            addr, args.port
+            addr, port
         ))?;
 
     stream
         .set_read_timeout(Some(Duration::from_secs(15)))
         .context("Failed to set read timeout")?;
 
-    // ── Build request ────────────────────────────────────────────────────
     let nonce_bytes: Vec<u8> = match args.nonce {
         Some(ref hex) => hex::decode(hex)
             .context("--nonce must be a valid hex string")?,
         None => random_nonce(),
     };
 
-    // Protocol: [cmd:u8][nonce_len:u16 LE][nonce bytes]
     let mut req = vec![CMD_GET_ATTESTATION];
     req.extend_from_slice(&(nonce_bytes.len() as u16).to_le_bytes());
     req.extend_from_slice(&nonce_bytes);
@@ -97,8 +101,6 @@ pub async fn run(args: AttestArgs) -> Result<()> {
 
     println!("{} Request sent (nonce: {} bytes)", "✔".green(), nonce_bytes.len());
 
-    // ── Read response ────────────────────────────────────────────────────
-    // Protocol response: [len:u32 LE][payload bytes]
     let mut len_buf = [0u8; 4];
     stream
         .read_exact(&mut len_buf)
@@ -118,14 +120,9 @@ pub async fn run(args: AttestArgs) -> Result<()> {
         .read_exact(&mut payload)
         .context("Failed to read response payload from enclave")?;
 
-    // The sidecar sends a JSON envelope wrapping the decoded attestation data.
     let envelope: AttestationEnvelope = serde_json::from_slice(&payload)
-        .context(
-            "Failed to parse attestation envelope. \
-             Ensure the sidecar version matches this CLI version.",
-        )?;
+        .context("Failed to parse attestation envelope.")?;
 
-    // ── Display ──────────────────────────────────────────────────────────
     println!();
     println!("{}", "Attestation Document".bold().yellow());
     println!("  {} Timestamp:  {}", "▶".dimmed(), envelope.timestamp.cyan());
@@ -136,7 +133,6 @@ pub async fn run(args: AttestArgs) -> Result<()> {
     println!("  {} PCR1: {}", "▶".dimmed(), envelope.pcr1.cyan());
     println!("  {} PCR2: {}", "▶".dimmed(), envelope.pcr2.cyan());
 
-    // ── Optionally write raw CBOR ────────────────────────────────────────
     if let Some(ref out_path) = args.out {
         let raw = hex::decode(&envelope.raw_cbor_hex)
             .context("Sidecar returned invalid hex for raw_cbor_hex")?;
@@ -144,7 +140,7 @@ pub async fn run(args: AttestArgs) -> Result<()> {
             .with_context(|| format!("Failed to write attestation doc to {}", out_path.display()))?;
         println!();
         println!(
-            "{} Raw CBOR attestation doc written to: {}",
+            "{} Raw CBOR written to: {}",
             "✔".green(),
             out_path.display()
         );
@@ -152,7 +148,86 @@ pub async fn run(args: AttestArgs) -> Result<()> {
 
     println!();
     println!(
-        "{} Next: register this enclave on Sui with PCRs + public key above.",
+        "{} Next: register this enclave on Sui.",
+        "ℹ".bold().blue()
+    );
+
+    Ok(())
+}
+
+/// TS template: HTTP GET /attestation (port 3000 default).
+/// Uses a raw TCP HTTP/1.1 request to avoid requiring reqwest without `sui` feature.
+async fn run_ts_attest(args: AttestArgs) -> Result<()> {
+    let port = args.port.unwrap_or(3000);
+    let url = format!("http://{}:{}/attestation", args.host, port);
+    println!("{} Fetching attestation from {}", "→".cyan(), url.cyan());
+
+    let addr = format!("{}:{}", args.host, port);
+    let mut stream = TcpStream::connect(&addr)
+        .with_context(|| format!(
+            "Cannot reach enclave at {}.\n\
+             Ensure the enclave is running and the argonaut bridge is active.",
+            addr
+        ))?;
+
+    stream.set_read_timeout(Some(Duration::from_secs(15)))?;
+
+    // Send a minimal HTTP/1.1 GET request
+    let http_req = format!(
+        "GET /attestation HTTP/1.1\r\nHost: {}:{}\r\nConnection: close\r\n\r\n",
+        args.host, port
+    );
+    stream.write_all(http_req.as_bytes())?;
+
+    // Read the full response
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response)?;
+    let response_str = String::from_utf8_lossy(&response);
+
+    // Split headers from body (separated by \r\n\r\n)
+    let body = response_str
+        .split("\r\n\r\n")
+        .nth(1)
+        .context("Invalid HTTP response — no body found")?;
+
+    // Parse JSON: {"attestation": "<hex>"}
+    let json: serde_json::Value = serde_json::from_str(body)
+        .with_context(|| format!("Failed to parse attestation JSON: {}", &body[..body.len().min(200)]))?;
+
+    let attestation_hex = json["attestation"]
+        .as_str()
+        .context("Response missing 'attestation' field")?;
+
+    let attestation_bytes = hex::decode(attestation_hex)
+        .context("Attestation field is not valid hex")?;
+
+    println!(
+        "{} Got attestation document ({} bytes)",
+        "✔".green(),
+        attestation_bytes.len()
+    );
+    println!();
+    println!("{}", "Attestation Document".bold().yellow());
+    println!(
+        "  {} CBOR hex: {}...",
+        "▶".dimmed(),
+        &attestation_hex[..attestation_hex.len().min(80)].cyan()
+    );
+
+    if let Some(ref out_path) = args.out {
+        std::fs::write(out_path, &attestation_bytes)
+            .with_context(|| format!("Failed to write attestation doc to {}", out_path.display()))?;
+        println!();
+        println!(
+            "{} Raw CBOR written to: {}",
+            "✔".green(),
+            out_path.display()
+        );
+    }
+
+    println!();
+    println!(
+        "{} Next: register this enclave on Sui.",
         "ℹ".bold().blue()
     );
 
