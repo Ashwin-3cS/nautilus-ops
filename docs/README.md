@@ -2,7 +2,19 @@
 
 Self-managed TEE orchestrator for AWS Nitro Enclaves on the Sui blockchain. Build enclave images, deploy them to EC2, register attestations on-chain, and verify enclave signatures — all from one CLI.
 
-> **Looking for the TEE application that runs inside the enclave?** See [nautilus-tee-app](https://github.com/Ashwin-3cS/nautilus-tee-app/) — the Axum sign-server with `/sign_name`, `/get_attestation`, and `/health` endpoints. This CLI orchestrates that application.
+> **Looking for the TEE application that runs inside the enclave?** See [nautilus-tee-app](https://github.com/Ashwin-3cS/nautilus-tee-app/) — a reference Axum sign-server that uses the `nautilus-enclave` library for crypto and attestation. This CLI orchestrates that application.
+
+## How It Works
+
+Nautilus-Ops is a three-part system:
+
+| Component | What it is | Who uses it |
+|-----------|-----------|-------------|
+| **nautilus-cli** | CLI binary for building, deploying, and managing enclaves | Developers, from their machine |
+| **nautilus-enclave** | Rust library for Ed25519 keygen, signing, and NSM attestation | TEE applications, as a Cargo dependency |
+| **contracts/nautilus** | Sui Move smart contract for on-chain attestation and signature verification | dApps, calling `verify_signature()` |
+
+The `nautilus-sidecar` is an optional pre-built VSOCK binary that wraps the library — useful if your enclave app isn't written in Rust.
 
 ## Architecture
 
@@ -14,12 +26,11 @@ Developer Machine                       EC2 Instance (Nitro-enabled)
 │  build               │───────────────>│  ┌────────────────────────────┐  │
 │  init-ci             │                │  │   Nitro Enclave (isolated)  │  │
 │  deploy-contract     │                │  │                            │  │
-│  update-pcrs         │                │  │   sign-server (Axum :4000) │  │
-│  register-enclave    │                │  │   - Ed25519 keygen (NSM)   │  │
-│  verify-signature    │                │  │   - /sign_name             │  │
-│                      │                │  │   - /get_attestation       │  │
-└─────────────────────┘                │  └────────────────────────────┘  │
-         │                              └──────────────────────────────────┘
+│  update-pcrs         │                │  │   Your TEE App             │  │
+│  register-enclave    │                │  │   └── nautilus-enclave     │  │
+│  verify-signature    │                │  │       (keygen, sign, attest)│  │
+│                      │                │  └────────────────────────────┘  │
+└─────────────────────┘                └──────────────────────────────────┘
          │  Sui RPC
          v
 ┌─────────────────────┐
@@ -52,11 +63,14 @@ nautilus-ops/
 │       ├── aws.rs                 # nautilus verify — EC2 enclave support check
 │       ├── sui_chain.rs           # deploy-contract, register-enclave, update-pcrs, verify-signature
 │       └── config.rs              # .nautilus.toml persistence
-├── nautilus-sidecar/              # Enclave binary (runs inside Nitro Enclave)
+├── nautilus-enclave/              # Library crate — crypto & attestation primitives
+│   └── src/
+│       ├── lib.rs                 # Public API: EnclaveKeyPair, get_attestation, verify_signature
+│       ├── crypto.rs              # Ed25519 keygen, sign, verify (ed25519-dalek)
+│       └── nsm.rs                 # NSM attestation (real with `nsm` feature, mock without)
+├── nautilus-sidecar/              # Optional VSOCK binary (for non-Rust enclave apps)
 │   └── src/
 │       ├── main.rs                # Boot: keygen -> VSOCK server on port 5000
-│       ├── crypto.rs              # Ed25519 keygen, sign, verify
-│       ├── nsm.rs                 # NSM attestation (real or mock)
 │       └── vsock.rs               # Binary protocol: GET_ATTESTATION (0x01), SIGN (0x02)
 ├── contracts/nautilus/            # Sui Move smart contract
 │   ├── Move.toml
@@ -71,7 +85,7 @@ nautilus-ops/
 - **Rust** (stable, 2021 edition)
 - **Sui CLI** — [install](https://docs.sui.io/guides/developer/getting-started/sui-install)
 - **Docker** — for `nautilus build`
-- **AWS CLI** (optional) — only for `nautilus verify` with `--features aws`
+- **AWS EC2** — Nitro-enabled instance (c5.xlarge or similar)
 
 Confirm Sui CLI is configured:
 
@@ -92,18 +106,90 @@ cargo install --path nautilus-cli
 # With on-chain commands (deploy-contract, register-enclave, update-pcrs, verify-signature)
 cargo install --path nautilus-cli --features sui
 
-# With AWS EC2 verification
-cargo install --path nautilus-cli --features aws
-
 # All features
 cargo install --path nautilus-cli --features "sui,aws"
 ```
 
-## Quick Start — Full End-to-End Flow
+---
 
-### 1. Build the Enclave Image
+## For TEE App Developers — Using `nautilus-enclave`
 
-You need a TEE application to run inside the enclave. See [nautilus-tee-app](https://github.com/Ashwin-3cS/nautilus-tee-app/) for a reference implementation with signing and attestation endpoints.
+If you're building your own TEE application in Rust, add `nautilus-enclave` as a dependency instead of wiring up Ed25519, NSM, and attestation yourself.
+
+### Add the dependency
+
+```toml
+# Cargo.toml
+[dependencies]
+nautilus-enclave = { git = "https://github.com/Ashwin-3cS/nautilus-cli.git" }
+
+[features]
+aws = ["nautilus-enclave/nsm"]   # enable real NSM inside enclave
+```
+
+### Use it in your app
+
+```rust
+use nautilus_enclave::{EnclaveKeyPair, get_attestation};
+
+// Generate Ed25519 keypair (NSM entropy in enclave, OsRng locally)
+let kp = EnclaveKeyPair::generate();
+
+// Get attestation document (public key embedded for on-chain verification)
+let doc = get_attestation(&kp.public_key_bytes(), b"optional-nonce")?;
+// doc.raw_cbor_hex  — the COSE_Sign1 attestation for on-chain submission
+// doc.pcr0/pcr1/pcr2 — enclave measurements
+
+// Sign any payload
+let sig = kp.sign(&payload_bytes);
+```
+
+Three functions. No NSM driver lifecycle, no CBOR parsing, no crypto library selection.
+
+### What it replaces
+
+Without `nautilus-enclave`, a TEE app has to do all of this:
+
+```rust
+// Before — ~60 lines of boilerplate per app
+use fastcrypto::ed25519::Ed25519KeyPair;
+use aws_nitro_enclaves_nsm_api::{driver, api::Request};
+
+let fd = driver::nsm_init();
+let req = Request::Attestation { user_data: None, nonce: None,
+    public_key: Some(ByteBuf::from(pk.as_bytes().to_vec())) };
+let resp = driver::nsm_process_request(fd, req);
+match resp { Response::Attestation { document } => { /* hex encode, extract PCRs... */ } }
+driver::nsm_exit(fd);
+// + figure out keygen, entropy, mock/real branching, feature gating...
+```
+
+With `nautilus-enclave`:
+
+```rust
+// After — 3 lines
+let kp = EnclaveKeyPair::generate();
+let doc = get_attestation(&kp.public_key_bytes(), &[])?;
+let sig = kp.sign(&payload);
+```
+
+### Mock support
+
+By default (without the `nsm` feature), all NSM calls return deterministic mock data. Your app compiles and runs on your laptop with the same code that runs inside the enclave. No conditional compilation needed in your app code.
+
+### Reference implementation
+
+See [nautilus-tee-app](https://github.com/Ashwin-3cS/nautilus-tee-app/) for a complete working example — an Axum sign-server with `/sign_name`, `/get_attestation`, and `/health` endpoints, all powered by `nautilus-enclave`.
+
+---
+
+## For dApp Developers — CLI Workflow
+
+Once you have a TEE app running inside an enclave, use the CLI to manage the full on-chain lifecycle.
+
+### Full End-to-End Flow
+
+**Step 1: Build the Enclave Image**
 
 ```bash
 cd /path/to/your-tee-app
@@ -112,7 +198,7 @@ nautilus build -f Containerfile -o out/enclave.eif
 # Outputs: out/enclave.eif + out/enclave.eif.pcrs.json
 ```
 
-### 2. Deploy to EC2 via CI
+**Step 2: Deploy to EC2 via CI**
 
 ```bash
 nautilus init-ci --cpu-count 2 --memory-mib 4096 -f Containerfile
@@ -122,49 +208,30 @@ nautilus init-ci --cpu-count 2 --memory-mib 4096 -f Containerfile
 # Push to main -> enclave deploys automatically
 ```
 
-### 3. Deploy the Smart Contract
+**Step 3: Deploy the Smart Contract**
 
 ```bash
-cd /path/to/nautilus-ops
-
 nautilus deploy-contract --network testnet
 # Publishes contracts/nautilus/ to Sui
 # Saves package_id, config_object_id, cap_object_id to .nautilus.toml
 ```
 
-### 4. Update PCRs
+**Step 4: Update PCRs + Register Enclave**
 
-From a PCR file (output of `nautilus build`):
-
-```bash
-nautilus update-pcrs --pcr-file out/enclave.eif.pcrs.json
-```
-
-Or pass them directly:
-
-```bash
-nautilus update-pcrs \
-  --pcr0 "13172639e463cc74..." \
-  --pcr1 "13172639e463cc74..." \
-  --pcr2 "21b9efbc18480766..."
-```
-
-### 5. Register the Enclave On-Chain
-
-```bash
-nautilus register-enclave --host <EC2_IP>
-# Fetches live attestation from the enclave
-# Verifies AWS Nitro root CA chain on-chain
-# Creates an Enclave object with the verified Ed25519 public key
-```
-
-Or combine steps 4 + 5 in one command:
+One command to set PCRs and register:
 
 ```bash
 nautilus register-enclave --host <EC2_IP> --pcr-file out/enclave.eif.pcrs.json
 ```
 
-### 6. Verify a Signature On-Chain
+Or do them separately:
+
+```bash
+nautilus update-pcrs --pcr-file out/enclave.eif.pcrs.json
+nautilus register-enclave --host <EC2_IP>
+```
+
+**Step 5: Verify a Signature On-Chain**
 
 ```bash
 nautilus verify-signature \
@@ -175,6 +242,10 @@ nautilus verify-signature \
 # Submits the signature to on-chain verify_signed_name()
 # Transaction succeeds only if the signature is valid
 ```
+
+### What happens after setup
+
+After steps 1–4, any dApp on Sui can call `verify_signature()` in their Move contract to verify that a payload was signed by your attested enclave. The CLI is only needed for setup and management — verification is fully on-chain and permissionless.
 
 ## CLI Reference
 
@@ -198,12 +269,12 @@ The CLI reads and writes `.nautilus.toml` in the current directory. After `deplo
 ```toml
 [sui]
 network = "testnet"
-package_id = "0x4a5174f8..."
-config_object_id = "0xd325f520..."
-cap_object_id = "0xf0224251..."
+package_id = "0x441c8612..."
+config_object_id = "0x61d547cb..."
+cap_object_id = "0xfed6e7d8..."
 ```
 
-All on-chain commands (`register-enclave`, `update-pcrs`, `verify-signature`) auto-read these values. You can override any value with CLI flags or environment variables:
+All on-chain commands auto-read these values. You can override with CLI flags or environment variables:
 
 | Flag | Environment Variable |
 |------|---------------------|
@@ -282,9 +353,9 @@ Rust:  IntentMessage { intent: u8, timestamp_ms: u64, data: T }
 
 BCS serializes by field order, not field name.
 
-## Sidecar (Enclave Binary)
+## Sidecar (Optional)
 
-The `nautilus-sidecar` crate runs inside the Nitro Enclave. It generates an Ed25519 keypair on boot and listens on VSOCK port 5000 with a binary protocol:
+The `nautilus-sidecar` is a pre-built VSOCK binary for cases where your enclave app isn't in Rust. It wraps `nautilus-enclave` behind a binary protocol on VSOCK port 5000:
 
 ```
 Request:  [cmd: u8] [payload_len: u16 LE] [payload bytes]
@@ -295,40 +366,28 @@ Commands:
   0x02 SIGN             payload = message bytes -> { signature, public_key }
 ```
 
-Build for local testing (mock NSM):
-
-```bash
-cargo build -p nautilus-sidecar
-```
-
-Build for deployment inside a real enclave:
-
-```bash
-cargo build -p nautilus-sidecar --features nsm --target x86_64-unknown-linux-musl --release
-```
+Most Rust developers should use the `nautilus-enclave` library directly instead.
 
 ## Feature Flags
 
 | Crate | Feature | Default | Purpose |
 |-------|---------|---------|---------|
-| `nautilus-cli` | `sui` | off | Enables on-chain commands (deploy-contract, register-enclave, update-pcrs, verify-signature). Adds `reqwest` dependency |
-| `nautilus-cli` | `aws` | off | Enables `nautilus verify` (EC2 enclave support check). Adds `aws-sdk-ec2` (~200MB) |
-| `nautilus-sidecar` | `nsm` | off | Enables real NSM device calls. Only works inside a Nitro Enclave on Linux |
+| `nautilus-cli` | `sui` | off | Enables on-chain commands. Adds `reqwest` dependency |
+| `nautilus-cli` | `aws` | off | Enables EC2 enclave support check. Adds `aws-sdk-ec2` |
+| `nautilus-enclave` | `nsm` | off | Enables real NSM device calls. Only works inside a Nitro Enclave |
+| `nautilus-sidecar` | `nsm` | off | Passes through to `nautilus-enclave/nsm` |
 
 ## Running Tests
 
 ```bash
-# All tests (no feature flags needed — uses mocks)
+# All tests across all crates (uses mocks, no enclave needed)
 cargo test
 
-# CLI tests only
-cargo test -p nautilus-cli
-
-# With Sui features
-cargo test -p nautilus-cli --features sui
-
-# Sidecar tests
-cargo test -p nautilus-sidecar
+# Individual crates
+cargo test -p nautilus-enclave      # 7 tests — crypto + attestation
+cargo test -p nautilus-sidecar      # 3 tests — VSOCK protocol
+cargo test -p nautilus-cli           # 12 tests — CLI subcommands
+cargo test -p nautilus-cli --features sui  # includes config tests
 ```
 
 ## Environment Variables
@@ -346,7 +405,7 @@ cargo test -p nautilus-sidecar
 
 | Repository | Description |
 |-----------|-------------|
-| [nautilus-tee-app](https://github.com/Ashwin-3cS/nautilus-tee-app/) | Reference TEE application — Axum sign-server with Ed25519 keygen, `/sign_name`, `/get_attestation`, and `/health` endpoints. Runs inside the Nitro Enclave. |
+| [nautilus-tee-app](https://github.com/Ashwin-3cS/nautilus-tee-app/) | Reference TEE application — Axum sign-server powered by `nautilus-enclave`. Has `/sign_name`, `/get_attestation`, and `/health` endpoints. Clone and customize for your use case. |
 
 ## License
 
