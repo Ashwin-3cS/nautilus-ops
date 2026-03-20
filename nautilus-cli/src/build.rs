@@ -7,6 +7,8 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
 
+use crate::config::{self, Template};
+
 /// PCR (Platform Configuration Register) measurements extracted from a built EIF.
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct PcrMeasurements {
@@ -50,10 +52,25 @@ pub struct BuildArgs {
     pub pcr_out: Option<PathBuf>,
 }
 
-pub async fn run(args: BuildArgs) -> Result<()> {
+pub async fn run(args: BuildArgs, cli_template: Option<Template>) -> Result<()> {
+    let cfg = config::NautilusConfig::load(None).unwrap_or_default();
+    let template = config::resolve_template(cli_template, &cfg)?;
+
     println!("{}", "Nautilus Build Engine".bold().cyan());
+    println!(
+        "{} Template: {}",
+        "→".cyan(),
+        template.to_string().cyan().bold()
+    );
     println!("{}", "─".repeat(40).dimmed());
 
+    match template {
+        Template::Rust => run_rust_build(args).await,
+        Template::Ts => run_ts_build(args).await,
+    }
+}
+
+async fn run_rust_build(args: BuildArgs) -> Result<()> {
     // ------------------------------------------------------------------
     // Step 1: docker build
     // ------------------------------------------------------------------
@@ -125,7 +142,94 @@ pub async fn run(args: BuildArgs) -> Result<()> {
          Ensure you are using a compatible version of nitro-cli.",
     )?;
 
-    println!("{} Enclave image built: {}", "✔".green(), args.output.display());
+    print_pcrs(&pcrs, &args.output);
+    write_pcrs_json(&pcrs, &args.output, args.pcr_out)?;
+
+    Ok(())
+}
+
+async fn run_ts_build(args: BuildArgs) -> Result<()> {
+    let context = args.context.canonicalize().unwrap_or_else(|_| args.context.clone());
+
+    // Check for Makefile
+    if !context.join("Makefile").exists() {
+        anyhow::bail!(
+            "No Makefile found in {}. nautilus-ts projects require a Makefile with an EIF build target.",
+            context.display()
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Step 1: Run `make` in the project directory
+    // ------------------------------------------------------------------
+    println!(
+        "{} Running make in {}",
+        "→".cyan(),
+        context.display()
+    );
+
+    let pb = spinner("Building EIF via make (docker multi-stage)…");
+    let make_status = Command::new("make")
+        .current_dir(&context)
+        .status()
+        .context("Failed to run `make`. Is make installed?")?;
+    pb.finish_and_clear();
+
+    if !make_status.success() {
+        anyhow::bail!("make failed with exit code {:?}", make_status.code());
+    }
+
+    // ------------------------------------------------------------------
+    // Step 2: Locate and parse PCR measurements
+    // ------------------------------------------------------------------
+    let eif_path = context.join("out/nitro.eif");
+    let pcrs_path = context.join("out/nitro.pcrs");
+
+    if !eif_path.exists() {
+        anyhow::bail!(
+            "EIF not found at {}. Expected make to produce out/nitro.eif",
+            eif_path.display()
+        );
+    }
+
+    println!("{} Enclave image built: {}", "✔".green(), eif_path.display());
+
+    if pcrs_path.exists() {
+        let content = std::fs::read_to_string(&pcrs_path)
+            .with_context(|| format!("Failed to read {}", pcrs_path.display()))?;
+        let pcrs = parse_pcrs_from_plain_text(&content)?;
+        print_pcrs(&pcrs, &eif_path);
+        write_pcrs_json(&pcrs, &eif_path, args.pcr_out)?;
+    } else {
+        println!(
+            "  {} PCR file not found at {}. Skipping PCR output.",
+            "⚠".yellow(),
+            pcrs_path.display()
+        );
+    }
+
+    // Check for argonaut binary (needed on host side)
+    let argonaut_path = context.join("out/argonaut");
+    if argonaut_path.exists() {
+        println!(
+            "{} Host binary built: {}",
+            "✔".green(),
+            argonaut_path.display()
+        );
+    }
+
+    println!();
+    println!(
+        "{} Next: run {} to scaffold your CI/CD pipeline.",
+        "ℹ".bold().blue(),
+        "nautilus init-ci --template ts".bold()
+    );
+
+    Ok(())
+}
+
+fn print_pcrs(pcrs: &PcrMeasurements, eif_path: &PathBuf) {
+    println!("{} Enclave image: {}", "✔".green(), eif_path.display());
     println!();
     println!("{}", "PCR Measurements".bold().yellow());
     println!("  {} PCR0 (kernel + boot): {}", "▶".dimmed(), pcrs.pcr0.cyan());
@@ -134,17 +238,20 @@ pub async fn run(args: BuildArgs) -> Result<()> {
     if let Some(ref pcr8) = pcrs.pcr8 {
         println!("  {} PCR8 (signing cert):  {}", "▶".dimmed(), pcr8.cyan());
     }
+}
 
-    // ------------------------------------------------------------------
-    // Step 4: Write PCR JSON sidecar
-    // ------------------------------------------------------------------
-    let pcr_path = args.pcr_out.unwrap_or_else(|| {
-        let mut p = args.output.clone();
+fn write_pcrs_json(
+    pcrs: &PcrMeasurements,
+    eif_path: &PathBuf,
+    pcr_out: Option<PathBuf>,
+) -> Result<()> {
+    let pcr_path = pcr_out.unwrap_or_else(|| {
+        let mut p = eif_path.clone();
         p.set_extension("pcrs.json");
         p
     });
 
-    let pcr_json = serde_json::to_string_pretty(&pcrs)?;
+    let pcr_json = serde_json::to_string_pretty(pcrs)?;
     std::fs::write(&pcr_path, &pcr_json)
         .with_context(|| format!("Failed to write PCR file to {}", pcr_path.display()))?;
 
@@ -153,12 +260,6 @@ pub async fn run(args: BuildArgs) -> Result<()> {
         "{} PCR measurements saved to: {}",
         "✔".green(),
         pcr_path.display()
-    );
-    println!();
-    println!(
-        "{} Next: run {} to scaffold your CI/CD pipeline.",
-        "ℹ".bold().blue(),
-        "nautilus init-ci".bold()
     );
 
     Ok(())
@@ -179,6 +280,41 @@ pub fn parse_pcrs_from_output(output: &str) -> Result<PcrMeasurements> {
         .with_context(|| format!("Failed to parse nitro-cli JSON: {}", json_line))?;
 
     Ok(parsed.measurements)
+}
+
+/// Parses PCR measurements from a plain text file (nautilus-ts `out/nitro.pcrs`).
+/// Format: one hash per line, e.g.:
+///   aabbcc... PCR0
+///   ddeeff... PCR1
+///   112233... PCR2
+/// or just three hash lines without labels.
+pub fn parse_pcrs_from_plain_text(content: &str) -> Result<PcrMeasurements> {
+    let lines: Vec<&str> = content.lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .collect();
+
+    if lines.len() < 3 {
+        anyhow::bail!(
+            "PCR plain text file must have at least 3 lines (one per PCR), found {}",
+            lines.len()
+        );
+    }
+
+    // Each line is either "hash" or "hash LABEL" — take the first whitespace-delimited token
+    let pcr0 = lines[0].split_whitespace().next()
+        .context("Empty PCR0 line")?.to_string();
+    let pcr1 = lines[1].split_whitespace().next()
+        .context("Empty PCR1 line")?.to_string();
+    let pcr2 = lines[2].split_whitespace().next()
+        .context("Empty PCR2 line")?.to_string();
+
+    Ok(PcrMeasurements {
+        pcr0,
+        pcr1,
+        pcr2,
+        pcr8: None,
+    })
 }
 
 fn spinner(msg: &str) -> ProgressBar {
@@ -248,5 +384,39 @@ Start building the Enclave Image...
         let json = serde_json::to_string(&pcrs).unwrap();
         let back: PcrMeasurements = serde_json::from_str(&json).unwrap();
         assert_eq!(pcrs, back);
+    }
+
+    #[test]
+    fn test_parse_pcrs_from_plain_text() {
+        let content = "aabbcc0011 PCR0\nddeeff2233 PCR1\n112233aabb PCR2\n";
+        let pcrs = parse_pcrs_from_plain_text(content).unwrap();
+        assert_eq!(pcrs.pcr0, "aabbcc0011");
+        assert_eq!(pcrs.pcr1, "ddeeff2233");
+        assert_eq!(pcrs.pcr2, "112233aabb");
+        assert!(pcrs.pcr8.is_none());
+    }
+
+    #[test]
+    fn test_parse_pcrs_from_plain_text_no_labels() {
+        let content = "aabbcc0011\nddeeff2233\n112233aabb\n";
+        let pcrs = parse_pcrs_from_plain_text(content).unwrap();
+        assert_eq!(pcrs.pcr0, "aabbcc0011");
+        assert_eq!(pcrs.pcr1, "ddeeff2233");
+        assert_eq!(pcrs.pcr2, "112233aabb");
+    }
+
+    #[test]
+    fn test_parse_pcrs_from_plain_text_too_few_lines() {
+        let content = "aabbcc0011\nddeeff2233\n";
+        assert!(parse_pcrs_from_plain_text(content).is_err());
+    }
+
+    #[test]
+    fn test_parse_pcrs_from_plain_text_with_empty_lines() {
+        let content = "\naabbcc0011\n\nddeeff2233\n\n112233aabb\n";
+        let pcrs = parse_pcrs_from_plain_text(content).unwrap();
+        assert_eq!(pcrs.pcr0, "aabbcc0011");
+        assert_eq!(pcrs.pcr1, "ddeeff2233");
+        assert_eq!(pcrs.pcr2, "112233aabb");
     }
 }

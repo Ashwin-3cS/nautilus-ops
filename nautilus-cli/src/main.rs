@@ -3,8 +3,7 @@ use clap::{Parser, Subcommand};
 
 mod aws;
 mod build;
-#[cfg(feature = "sui")]
-mod config;
+pub mod config;
 mod init_ci;
 mod attest;
 mod sui_chain;
@@ -18,6 +17,10 @@ mod sui_chain;
     long_about = None,
 )]
 struct Cli {
+    /// Template type (auto-detected from project if omitted).
+    #[arg(long, global = true, value_enum)]
+    template: Option<config::Template>,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -61,8 +64,8 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Build(args) => build::run(args).await,
-        Commands::InitCi(args) => init_ci::run(args).await,
+        Commands::Build(args) => build::run(args, cli.template).await,
+        Commands::InitCi(args) => init_ci::run(args, cli.template).await,
         Commands::Attest(args) => attest::run(args).await,
         Commands::Verify(args) => aws::verify_enclave_enabled(&args.instance_id).await,
         Commands::DeployContract(args) => sui_chain::deploy_contract(args).await,
