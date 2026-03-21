@@ -1,0 +1,7 @@
+target
+contracts/nautilus/build
+.git
+docs
+handover.md
+*.md
+.nautilus.toml

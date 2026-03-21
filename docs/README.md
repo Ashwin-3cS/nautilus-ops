@@ -121,6 +121,18 @@ cargo install --path nautilus-cli --features sui
 cargo install --path nautilus-cli --features "sui,aws"
 ```
 
+### Docker build (no Rust toolchain needed)
+
+If you don't have Rust installed, you can build the CLI using Docker and extract the binary:
+
+```bash
+docker build -t nautilus-cli .
+docker cp $(docker create nautilus-cli):/usr/local/bin/nautilus /usr/local/bin/nautilus
+nautilus --help
+```
+
+This uses a multi-stage build with `cargo-chef` for fast cached rebuilds. The extracted binary is Linux x86_64 — Mac/Windows users should use `cargo install` instead.
+
 ---
 
 ## For TEE App Developers — Using `nautilus-enclave`
