@@ -31,6 +31,22 @@ impl Template {
             Template::Ts => "/attestation",
         }
     }
+
+    /// Default signing endpoint path for this template.
+    pub fn default_sign_endpoint(self) -> &'static str {
+        match self {
+            Template::Rust => "/sign_name",
+            Template::Ts => "/sign",
+        }
+    }
+
+    /// Default on-chain verify function for this template.
+    pub fn default_verify_function(self) -> &'static str {
+        match self {
+            Template::Rust => "verify_signed_name",
+            Template::Ts => "verify_signed_data",
+        }
+    }
 }
 
 impl std::fmt::Display for Template {
@@ -59,8 +75,20 @@ pub struct NautilusConfig {
 pub struct SuiConfig {
     pub network: Option<String>,
     pub package_id: Option<String>,
+    /// Original (first-published) package ID where types like ENCLAVE were defined.
+    /// Used for `--type-args` in sui CLI calls. Falls back to `package_id` if unset.
+    pub original_package_id: Option<String>,
     pub config_object_id: Option<String>,
     pub cap_object_id: Option<String>,
+}
+
+impl SuiConfig {
+    /// Package ID to use for `--type-args`. Types are anchored to the original
+    /// (first-published) package. Falls back to `package_id` if not set.
+    pub fn type_arg_package_id(&self) -> Option<&str> {
+        self.original_package_id.as_deref()
+            .or(self.package_id.as_deref())
+    }
 }
 
 impl NautilusConfig {
@@ -150,6 +178,7 @@ mod tests {
             sui: SuiConfig {
                 network: Some("testnet".into()),
                 package_id: Some("0xabc".into()),
+                original_package_id: Some("0x999".into()),
                 config_object_id: Some("0xdef".into()),
                 cap_object_id: Some("0x123".into()),
             },
