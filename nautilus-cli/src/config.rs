@@ -9,7 +9,7 @@ const CONFIG_FILE: &str = ".nautilus.toml";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum Template {
-    /// Rust-based TEE app (nautilus-tee-app, uses nautilus-enclave + sidecar)
+    /// Rust-based TEE app (nautilus-tee-app, uses nautilus-enclave library)
     Rust,
     /// TypeScript-based TEE app (nautilus-ts, uses Bun + argonaut)
     Ts,
