@@ -6,6 +6,7 @@ module nautilus::enclave;
 use std::bcs;
 use std::string::String;
 use sui::ed25519;
+use sui::hash;
 use sui::nitro_attestation::NitroAttestationDocument;
 
 use fun to_pcrs as NitroAttestationDocument.to_pcrs;
@@ -196,6 +197,18 @@ entry fun verify_signed_name(
 ) {
     let payload = SignedName { name, message };
     let valid = verify_signature(enclave, intent_scope, timestamp_ms, payload, &signature);
+    assert!(valid, EInvalidSignature);
+}
+
+/// Verify a signature over raw bytes (blake2b256 hash, no IntentMessage wrapping).
+/// Used by TS template and any endpoint that signs blake2b256(data).
+entry fun verify_signed_data<T>(
+    enclave: &Enclave<T>,
+    data: vector<u8>,
+    signature: vector<u8>,
+) {
+    let hashed = hash::blake2b256(&data);
+    let valid = ed25519::ed25519_verify(&signature, &enclave.pk, &hashed);
     assert!(valid, EInvalidSignature);
 }
 
