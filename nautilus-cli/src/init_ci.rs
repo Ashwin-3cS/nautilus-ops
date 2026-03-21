@@ -142,19 +142,24 @@ jobs:
         run: |
 {preamble}
           set -e
+          # Detect package manager (AL2023 uses dnf, AL2 uses yum/amazon-linux-extras)
+          if command -v dnf &> /dev/null; then
+            PKG="sudo dnf"
+          else
+            PKG="sudo yum"
+          fi
+
           if ! command -v docker &> /dev/null; then
-            sudo yum update -y
-            sudo amazon-linux-extras install docker -y || (curl -fsSL https://get.docker.com | sudo sh)
+            $PKG install -y docker || (curl -fsSL https://get.docker.com | sudo sh)
             sudo systemctl start docker && sudo systemctl enable docker
             sudo usermod -aG docker $USER
           fi
           if ! command -v nitro-cli &> /dev/null; then
-            sudo amazon-linux-extras install aws-nitro-enclaves-cli -y
-            sudo yum install -y aws-nitro-enclaves-cli-devel
+            $PKG install -y aws-nitro-enclaves-cli aws-nitro-enclaves-cli-devel
             sudo usermod -aG ne $USER
           fi
-          command -v socat &> /dev/null || sudo yum install -y socat
-          command -v jq    &> /dev/null || sudo yum install -y jq
+          command -v socat &> /dev/null || $PKG install -y socat
+          command -v jq    &> /dev/null || $PKG install -y jq
           echo "Dependencies ready"
           REMOTE
           rm -f /tmp/deploy_key
@@ -311,19 +316,24 @@ jobs:
         run: |
 {preamble}
           set -e
+          # Detect package manager (AL2023 uses dnf, AL2 uses yum/amazon-linux-extras)
+          if command -v dnf &> /dev/null; then
+            PKG="sudo dnf"
+          else
+            PKG="sudo yum"
+          fi
+
           if ! command -v docker &> /dev/null; then
-            sudo yum update -y
-            sudo amazon-linux-extras install docker -y || (curl -fsSL https://get.docker.com | sudo sh)
+            $PKG install -y docker || (curl -fsSL https://get.docker.com | sudo sh)
             sudo systemctl start docker && sudo systemctl enable docker
             sudo usermod -aG docker $USER
           fi
           if ! command -v nitro-cli &> /dev/null; then
-            sudo amazon-linux-extras install aws-nitro-enclaves-cli -y
-            sudo yum install -y aws-nitro-enclaves-cli-devel
+            $PKG install -y aws-nitro-enclaves-cli aws-nitro-enclaves-cli-devel
             sudo usermod -aG ne $USER
           fi
-          command -v jq   &> /dev/null || sudo yum install -y jq
-          command -v make &> /dev/null || sudo yum install -y make
+          command -v jq   &> /dev/null || $PKG install -y jq
+          command -v make &> /dev/null || $PKG install -y make
           echo "Dependencies ready"
           REMOTE
           rm -f /tmp/deploy_key
