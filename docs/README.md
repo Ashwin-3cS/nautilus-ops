@@ -98,6 +98,18 @@ nautilus-ops/
 - **Docker** — for `nautilus build`
 - **AWS EC2** — Nitro-enabled instance (c5.xlarge or similar)
 
+### EC2 Security Group — Inbound Rules
+
+Your EC2 instance must allow inbound traffic on the port your template uses. Add these to your security group:
+
+| Template | Port | Protocol |
+|----------|------|----------|
+| Rust | 4000 | TCP |
+| TypeScript | 3000 | TCP |
+| Python | 5000 | TCP |
+
+Only open the port for the template you're using. Restrict the source IP to your machine or CI runner if possible.
+
 Confirm Sui CLI is configured:
 
 ```bash
@@ -421,6 +433,10 @@ cargo test -p nautilus-cli --features sui         # includes on-chain config tes
 |-----------|-------------|
 | [nautilus-rust](https://github.com/Ashwin-3cS/nautilus-rust/) | Rust TEE template — Axum sign-server powered by `nautilus-enclave`. Endpoints: `/sign_name`, `/get_attestation`, `/health` |
 | [nautilus-ts](https://github.com/Ashwin-3cS/nautilus-ts/) | TypeScript TEE template — Bun + argonaut framework. Fork of [unconfirmedlabs/nautilus-ts](https://github.com/unconfirmedlabs/nautilus-ts). Endpoints: `/sign`, `/attestation`, `/health_check` |
+
+## Security
+
+This CLI and its associated smart contracts have **not been security audited**. Use at your own risk. It is intended for development, testing, and educational purposes. If you plan to use it in production with real assets, you should conduct a thorough security review of the CLI, the Move contract, and your enclave application before deployment.
 
 ## License
 
