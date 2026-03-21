@@ -200,6 +200,8 @@ nautilus init-ci --cpu-count 2 --memory-mib 4096 -f Containerfile
 # Push to main -> enclave deploys automatically
 ```
 
+The generated workflow auto-detects the package manager at runtime — `dnf` on Amazon Linux 2023, `yum` on AL2. Docker, nitro-cli, and all dependencies are installed from a clean instance automatically, no manual setup required.
+
 **Step 3: Deploy the Smart Contract**
 
 ```bash
@@ -207,6 +209,16 @@ nautilus deploy-contract --network testnet
 # Publishes contracts/nautilus/ to Sui
 # Saves package_id, config_object_id, cap_object_id to .nautilus.toml
 ```
+
+**Step 3.5: Copy Config to Template Repo**
+
+The `deploy-contract` command saves object IDs to `.nautilus.toml` in the nautilus-ops directory. Copy this config to your template repo so subsequent commands can read it:
+
+```bash
+cp /path/to/nautilus-ops/.nautilus.toml /path/to/your-tee-app/.nautilus.toml
+```
+
+Alternatively, pass IDs via flags: `--package-id`, `--config-object-id`, `--cap-object-id`.
 
 **Step 4: Fetch Attestation + Update PCRs**
 
