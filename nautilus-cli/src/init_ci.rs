@@ -382,6 +382,8 @@ jobs:
 {preamble}
           cat > ~/nautilus-app/config.json <<'EOF'
           {{
+            "httpPort": 3000,
+            "httpVsockPort": 3000,
             "endpoints": [],
             "logLevel": "info"
           }}
@@ -412,8 +414,14 @@ jobs:
 
           sudo systemctl daemon-reload
           sudo systemctl enable --now nautilus-argonaut.service
-          sleep 2
-          sudo systemctl is-active nautilus-argonaut.service
+          sleep 3
+          if ! sudo systemctl is-active nautilus-argonaut.service; then
+            echo "--- argonaut service failed, showing logs ---"
+            sudo journalctl -u nautilus-argonaut.service --no-pager -n 30
+            cat /etc/systemd/system/nautilus-argonaut.service
+            ls -la $HOME/nautilus-app/out/argonaut || true
+            exit 1
+          fi
           echo "Argonaut bridge active: CID=$CID  port=3000"
           REMOTE
           rm -f /tmp/deploy_key
