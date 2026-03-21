@@ -109,13 +109,14 @@ pub struct VerifySignatureArgs {
     #[arg(long)]
     pub port: Option<u16>,
 
-    /// Signing endpoint path on the enclave (default: /sign_name).
-    #[arg(long, default_value = "/sign_name")]
-    pub sign_endpoint: String,
+    /// Signing endpoint path. Default: /sign_name (Rust), /sign (TS).
+    #[arg(long)]
+    pub sign_endpoint: Option<String>,
 
-    /// Name to sign (sent to the enclave's sign endpoint).
+    /// Data to send to the signing endpoint.
+    /// Rust: used as the "name" field in JSON body. TS: sent as raw POST body.
     #[arg(long, default_value = "Nautilus")]
-    pub name: String,
+    pub data: String,
 
     /// On-chain Enclave object ID (created by register-enclave).
     #[arg(long, env = "NAUTILUS_ENCLAVE_ID")]
@@ -142,6 +143,17 @@ mod implementation {
     use anyhow::Context;
     use colored::Colorize;
     use crate::config::NautilusConfig;
+
+    /// Parse JSON from sui CLI output, skipping any `[warning]` lines that
+    /// the sui CLI emits before the JSON blob (e.g. version mismatch warnings).
+    fn parse_sui_json(output: &str) -> Result<serde_json::Value> {
+        // Find the first line starting with '{' or '['
+        let json_start = output
+            .find(|c: char| c == '{' || c == '[')
+            .context("No JSON found in sui CLI output")?;
+        serde_json::from_str(&output[json_start..])
+            .context("Failed to parse sui CLI JSON output")
+    }
 
     /// Resolve an object ID from CLI arg, env var, or .nautilus.toml.
     fn resolve_id(
@@ -202,9 +214,7 @@ mod implementation {
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-
-        let json_val: serde_json::Value = serde_json::from_str(&stdout)
-            .context("Failed to parse sui publish JSON output")?;
+        let json_val = parse_sui_json(&stdout)?;
 
         let mut package_id: Option<String> = None;
         let mut config_object_id: Option<String> = None;
@@ -327,7 +337,9 @@ mod implementation {
         //   b) nautilus::enclave::register_enclave<ENCLAVE>(config, cap, doc)
         println!("{} Submitting on-chain registration...", "→".cyan());
 
-        let type_arg = format!("{}::enclave::ENCLAVE", package_id);
+        let type_pkg = config.sui.type_arg_package_id()
+            .unwrap_or(&package_id);
+        let type_arg = format!("{}::enclave::ENCLAVE", type_pkg);
         let attestation_vec = format!("vector[{}]",
             attestation_bytes.iter()
                 .map(|b| b.to_string())
@@ -364,18 +376,48 @@ mod implementation {
         println!();
         println!("{}", "Registration Successful".bold().green());
 
-        // Try to extract digest and created objects from JSON output
-        if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&stdout) {
-            if let Some(digest) = json_val["digest"].as_str() {
-                println!("  {} Transaction: {}", "▶".dimmed(), digest.cyan());
-            }
-            if let Some(changes) = json_val["objectChanges"].as_array() {
-                for change in changes {
-                    let obj_type = change["objectType"].as_str().unwrap_or("");
-                    if obj_type.contains("Enclave<") && !obj_type.contains("EnclaveConfig") {
-                        if let Some(obj_id) = change["objectId"].as_str() {
-                            println!("  {} Enclave ID:   {}", "▶".dimmed(), obj_id.cyan());
+        // Extract digest and created objects from JSON output
+        match parse_sui_json(&stdout) {
+            Ok(json_val) => {
+                if let Some(digest) = json_val["digest"].as_str() {
+                    println!("  {} Transaction: {}", "▶".dimmed(), digest.cyan());
+                }
+                if let Some(changes) = json_val["objectChanges"].as_array() {
+                    for change in changes {
+                        let obj_type = change["objectType"].as_str().unwrap_or("");
+                        if obj_type.contains("Enclave<") && !obj_type.contains("EnclaveConfig") {
+                            if let Some(obj_id) = change["objectId"].as_str() {
+                                println!("  {} Enclave ID:   {}", "▶".dimmed(), obj_id.cyan());
+                            }
                         }
+                    }
+                }
+            }
+            Err(_) => {
+                // ptb --json may not output JSON on some sui CLI versions; parse text
+                let lines: Vec<&str> = stdout.lines().collect();
+                for line in &lines {
+                    let trimmed = line.trim();
+                    if trimmed.starts_with("Transaction Digest:") {
+                        let digest = trimmed.trim_start_matches("Transaction Digest:").trim();
+                        println!("  {} Transaction: {}", "▶".dimmed(), digest.cyan());
+                    }
+                }
+                // Find ObjectID lines near ObjectType containing Enclave<
+                // Text format: ObjectID appears a few lines before ObjectType
+                let mut last_object_id: Option<&str> = None;
+                for line in &lines {
+                    let trimmed = line.trim();
+                    if trimmed.contains("ObjectID:") {
+                        if let Some(id_start) = trimmed.find("0x") {
+                            last_object_id = trimmed[id_start..].split_whitespace().next();
+                        }
+                    }
+                    if trimmed.contains("ObjectType:") && trimmed.contains("Enclave<") && !trimmed.contains("EnclaveConfig") {
+                        if let Some(id) = last_object_id {
+                            println!("  {} Enclave ID:   {}", "▶".dimmed(), id.cyan());
+                        }
+                        last_object_id = None;
                     }
                 }
             }
@@ -456,7 +498,9 @@ mod implementation {
         println!("  {} PCR2: {}...", "▶".dimmed(), &pcr2[..16.min(pcr2.len())].cyan());
 
         // Build and submit transaction via sui CLI
-        let type_arg = format!("{}::enclave::ENCLAVE", package_id);
+        let type_pkg = config.sui.type_arg_package_id()
+            .unwrap_or(&package_id);
+        let type_arg = format!("{}::enclave::ENCLAVE", type_pkg);
 
         let output = std::process::Command::new("sui")
             .args([
@@ -481,8 +525,14 @@ mod implementation {
             anyhow::bail!("sui client call failed:\n{}\n{}", stderr, stdout);
         }
 
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let json_val = parse_sui_json(&stdout)?;
+
         println!();
         println!("{}", "PCR Update Successful".bold().green());
+        if let Some(digest) = json_val["digest"].as_str() {
+            println!("  {} Transaction: {}", "▶".dimmed(), digest.cyan());
+        }
         println!(
             "{} The EnclaveConfig now expects these PCR values. Previous enclave registration is invalidated.",
             "ℹ".bold().blue()
@@ -498,17 +548,29 @@ mod implementation {
         let config = NautilusConfig::load(None).unwrap_or_default();
         let template = crate::config::resolve_template(None, &config)?;
         let package_id = resolve_id(&args.package_id, &config.sui.package_id, "package_id")?;
+        let type_pkg = config.sui.type_arg_package_id()
+            .unwrap_or(&package_id)
+            .to_string();
 
-        // 1. Call the sign endpoint on the enclave
+        match template {
+            crate::config::Template::Rust => verify_signature_rust(&args, &package_id, &type_pkg).await,
+            crate::config::Template::Ts => verify_signature_ts(&args, &package_id, &type_pkg).await,
+        }
+    }
+
+    /// Rust template: POST {"name": data} to /sign_name, verify via on-chain verify_signed_name.
+    async fn verify_signature_rust(args: &VerifySignatureArgs, package_id: &str, _type_pkg: &str) -> Result<()> {
+        let template = crate::config::Template::Rust;
         let port = args.port.unwrap_or_else(|| template.default_http_port());
-        let endpoint = args.sign_endpoint.trim_start_matches('/');
+        let endpoint = args.sign_endpoint.as_deref().unwrap_or(template.default_sign_endpoint());
+        let endpoint = endpoint.trim_start_matches('/');
         let url = format!("http://{}:{}/{}", args.host, port, endpoint);
-        println!("{} Calling {} with name \"{}\"", "→".cyan(), url.cyan(), args.name);
+        println!("{} Calling {} with name \"{}\"", "→".cyan(), url.cyan(), args.data);
 
         let client = reqwest::Client::new();
         let resp: serde_json::Value = client
             .post(&url)
-            .json(&serde_json::json!({ "name": args.name }))
+            .json(&serde_json::json!({ "name": args.data }))
             .send()
             .await
             .with_context(|| format!("Failed to connect to sign-server at {}", url))?
@@ -533,9 +595,7 @@ mod implementation {
             .as_str()
             .context("Missing 'signature' in response")?;
 
-        // Validate hex
-        hex::decode(signature_hex)
-            .context("Signature is not valid hex")?;
+        hex::decode(signature_hex).context("Signature is not valid hex")?;
 
         println!("{} Got signed response:", "✔".green());
         println!("  {} intent: {}", "▶".dimmed(), intent);
@@ -543,17 +603,14 @@ mod implementation {
         println!("  {} name: {}", "▶".dimmed(), name.cyan());
         println!("  {} signature: {}...", "▶".dimmed(), &signature_hex[..32]);
 
-        // 2. Call verify_signed_name on-chain
         println!();
         println!("{} Verifying signature on-chain...", "→".cyan());
-
-        let sig_vec = format!("0x{}", signature_hex);
 
         let output = std::process::Command::new("sui")
             .args([
                 "client", "call",
                 "--json",
-                "--package", &package_id,
+                "--package", package_id,
                 "--module", "enclave",
                 "--function", "verify_signed_name",
                 "--args",
@@ -562,23 +619,85 @@ mod implementation {
                 &timestamp_ms.to_string(),
                 name,
                 message,
-                &sig_vec,
+                &format!("0x{}", signature_hex),
                 "--gas-budget", &args.gas_budget.to_string(),
             ])
             .output()
             .context("Failed to run `sui client call`")?;
 
+        print_verify_result(&output)
+    }
+
+    /// TS template: POST raw data to /sign, verify via on-chain verify_signed_data.
+    async fn verify_signature_ts(args: &VerifySignatureArgs, package_id: &str, type_pkg: &str) -> Result<()> {
+        let template = crate::config::Template::Ts;
+        let port = args.port.unwrap_or_else(|| template.default_http_port());
+        let endpoint = args.sign_endpoint.as_deref().unwrap_or(template.default_sign_endpoint());
+        let endpoint = endpoint.trim_start_matches('/');
+        let url = format!("http://{}:{}/{}", args.host, port, endpoint);
+        println!("{} Calling {} with data \"{}\"", "→".cyan(), url.cyan(), args.data);
+
+        let client = reqwest::Client::new();
+        let resp: serde_json::Value = client
+            .post(&url)
+            .header("Content-Type", "application/octet-stream")
+            .body(args.data.clone())
+            .send()
+            .await
+            .with_context(|| format!("Failed to connect to enclave at {}", url))?
+            .json::<serde_json::Value>()
+            .await
+            .context("Failed to parse sign response")?;
+
+        let signature_hex = resp["signature"]
+            .as_str()
+            .context("Missing 'signature' in response")?;
+
+        hex::decode(signature_hex).context("Signature is not valid hex")?;
+
+        println!("{} Got signature:", "✔".green());
+        println!("  {} signature: {}...", "▶".dimmed(), &signature_hex[..signature_hex.len().min(64)]);
+
+        println!();
+        println!("{} Verifying signature on-chain (verify_signed_data)...", "→".cyan());
+
+        // Convert data to hex bytes for sui CLI
+        let data_hex = format!("0x{}", hex::encode(args.data.as_bytes()));
+
+        // verify_signed_data is generic <T>, so we need --type-args.
+        // The type arg uses the original package ID (where ENCLAVE was defined).
+        let type_arg = format!("{}::enclave::ENCLAVE", type_pkg);
+
+        let output = std::process::Command::new("sui")
+            .args([
+                "client", "call",
+                "--json",
+                "--package", package_id,
+                "--module", "enclave",
+                "--function", "verify_signed_data",
+                "--type-args", &type_arg,
+                "--args",
+                &args.enclave_id,
+                &data_hex,
+                &format!("0x{}", signature_hex),
+                "--gas-budget", &args.gas_budget.to_string(),
+            ])
+            .output()
+            .context("Failed to run `sui client call`")?;
+
+        print_verify_result(&output)
+    }
+
+    /// Print the result of an on-chain signature verification.
+    fn print_verify_result(output: &std::process::Output) -> Result<()> {
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let stdout = String::from_utf8_lossy(&output.stdout);
             println!();
             println!("{}", "Signature Verification FAILED".bold().red());
-            println!("  {} The on-chain verify_signed_name aborted.", "✗".red());
+            println!("  {} The on-chain verification aborted.", "✗".red());
             println!("  {} This means the signature does not match the enclave's public key.", "ℹ".blue());
-            anyhow::bail!(
-                "verify_signed_name failed:\n{}\n{}",
-                stderr, stdout
-            );
+            anyhow::bail!("verify_signature failed:\n{}\n{}", stderr, stdout);
         }
 
         let stdout_str = String::from_utf8_lossy(&output.stdout);
@@ -587,8 +706,7 @@ mod implementation {
         println!("{}", "Signature Verification PASSED".bold().green());
         println!("  {} The signature was verified on-chain against the registered enclave.", "✔".green());
 
-        // Extract digest from JSON output
-        if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&stdout_str) {
+        if let Ok(json_val) = parse_sui_json(&stdout_str) {
             if let Some(digest) = json_val["digest"].as_str() {
                 println!("  {} Transaction: {}", "▶".dimmed(), digest.cyan());
             }
