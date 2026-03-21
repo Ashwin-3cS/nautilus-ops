@@ -26,6 +26,8 @@ colored = "2"
 indicatif = "0.17"
 # Hex encoding/decoding (used by attest.rs)
 hex = "0.4"
+# CBOR parsing (used by attest.rs for TS attestation doc parsing)
+ciborium = "0.2"
 # TOML config file support (used by config.rs)
 toml = "0.8"
 # HTTP client (used by sui_chain register-enclave)

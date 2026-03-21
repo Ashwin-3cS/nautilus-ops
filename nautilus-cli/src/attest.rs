@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use ciborium::value::Value as CborValue;
 use clap::Args;
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
@@ -172,25 +173,21 @@ async fn run_ts_attest(args: AttestArgs) -> Result<()> {
 
     stream.set_read_timeout(Some(Duration::from_secs(15)))?;
 
-    // Send a minimal HTTP/1.1 GET request
     let http_req = format!(
         "GET /attestation HTTP/1.1\r\nHost: {}:{}\r\nConnection: close\r\n\r\n",
         args.host, port
     );
     stream.write_all(http_req.as_bytes())?;
 
-    // Read the full response
     let mut response = Vec::new();
     stream.read_to_end(&mut response)?;
     let response_str = String::from_utf8_lossy(&response);
 
-    // Split headers from body (separated by \r\n\r\n)
     let body = response_str
         .split("\r\n\r\n")
         .nth(1)
         .context("Invalid HTTP response — no body found")?;
 
-    // Parse JSON: {"attestation": "<hex>"}
     let json: serde_json::Value = serde_json::from_str(body)
         .with_context(|| format!("Failed to parse attestation JSON: {}", &body[..body.len().min(200)]))?;
 
@@ -206,20 +203,32 @@ async fn run_ts_attest(args: AttestArgs) -> Result<()> {
         "✔".green(),
         attestation_bytes.len()
     );
+
+    // Parse COSE_Sign1 → extract payload → extract PCRs + public_key
+    let parsed = parse_attestation_cbor(&attestation_bytes)?;
+
     println!();
     println!("{}", "Attestation Document".bold().yellow());
-    println!(
-        "  {} CBOR hex: {}...",
-        "▶".dimmed(),
-        &attestation_hex[..attestation_hex.len().min(80)].cyan()
-    );
+    println!("  {} Public Key: {}", "▶".dimmed(), parsed.public_key.cyan());
+    println!();
+    println!("{}", "PCR Measurements (from NSM)".bold().yellow());
+    println!("  {} PCR0: {}", "▶".dimmed(), parsed.pcr0.cyan());
+    println!("  {} PCR1: {}", "▶".dimmed(), parsed.pcr1.cyan());
+    println!("  {} PCR2: {}", "▶".dimmed(), parsed.pcr2.cyan());
 
     if let Some(ref out_path) = args.out {
-        std::fs::write(out_path, &attestation_bytes)
-            .with_context(|| format!("Failed to write attestation doc to {}", out_path.display()))?;
+        let pcrs_json = serde_json::json!({
+            "pcr0": parsed.pcr0,
+            "pcr1": parsed.pcr1,
+            "pcr2": parsed.pcr2,
+            "public_key": parsed.public_key,
+            "raw_cbor_hex": attestation_hex,
+        });
+        std::fs::write(out_path, serde_json::to_string_pretty(&pcrs_json)?)
+            .with_context(|| format!("Failed to write to {}", out_path.display()))?;
         println!();
         println!(
-            "{} Raw CBOR written to: {}",
+            "{} PCRs + attestation written to: {}",
             "✔".green(),
             out_path.display()
         );
@@ -227,11 +236,93 @@ async fn run_ts_attest(args: AttestArgs) -> Result<()> {
 
     println!();
     println!(
-        "{} Next: register this enclave on Sui.",
+        "{} Next: update PCRs on-chain, then register this enclave.",
         "ℹ".bold().blue()
     );
 
     Ok(())
+}
+
+/// Parsed fields from a Nitro attestation COSE_Sign1 document.
+struct ParsedAttestation {
+    pcr0: String,
+    pcr1: String,
+    pcr2: String,
+    public_key: String,
+}
+
+/// Parse a COSE_Sign1 attestation document (CBOR) to extract PCRs and public key.
+///
+/// Structure: CBOR Tag(18) or Array [protected, unprotected, payload, signature]
+/// Payload is a CBOR map containing "pcrs" (map {0: bytes, 1: bytes, ...})
+/// and "public_key" (bytes).
+fn parse_attestation_cbor(data: &[u8]) -> Result<ParsedAttestation> {
+    let cose: CborValue = ciborium::from_reader(data)
+        .context("Failed to parse COSE_Sign1 CBOR")?;
+
+    // COSE_Sign1 is a CBOR array of 4 elements; may be wrapped in Tag(18)
+    let arr = match &cose {
+        CborValue::Tag(18, inner) => match inner.as_ref() {
+            CborValue::Array(a) => a,
+            _ => anyhow::bail!("COSE_Sign1 tag(18) does not contain an array"),
+        },
+        CborValue::Array(a) => a,
+        _ => anyhow::bail!("Expected COSE_Sign1 array, got {:?}", cose),
+    };
+
+    if arr.len() < 4 {
+        anyhow::bail!("COSE_Sign1 array has {} elements, expected 4", arr.len());
+    }
+
+    // Element [2] is the payload (bstr containing a CBOR-encoded map)
+    let payload_bytes = match &arr[2] {
+        CborValue::Bytes(b) => b,
+        _ => anyhow::bail!("COSE_Sign1 payload is not a byte string"),
+    };
+
+    let payload: CborValue = ciborium::from_reader(payload_bytes.as_slice())
+        .context("Failed to parse attestation payload CBOR")?;
+
+    let payload_map = match &payload {
+        CborValue::Map(m) => m,
+        _ => anyhow::bail!("Attestation payload is not a CBOR map"),
+    };
+
+    // Extract PCRs: key "pcrs" → map { Integer(0): Bytes, Integer(1): Bytes, ... }
+    let pcrs_map = payload_map.iter()
+        .find(|(k, _)| matches!(k, CborValue::Text(s) if s == "pcrs"))
+        .map(|(_, v)| v)
+        .context("Attestation payload missing 'pcrs' field")?;
+
+    let pcrs = match pcrs_map {
+        CborValue::Map(m) => m,
+        _ => anyhow::bail!("'pcrs' field is not a CBOR map"),
+    };
+
+    let extract_pcr = |index: i128| -> Result<String> {
+        pcrs.iter()
+            .find(|(k, _)| matches!(k, CborValue::Integer(i) if i128::from(*i) == index))
+            .and_then(|(_, v)| match v {
+                CborValue::Bytes(b) => Some(hex::encode(b)),
+                _ => None,
+            })
+            .with_context(|| format!("Missing or invalid PCR{}", index))
+    };
+
+    let pcr0 = extract_pcr(0)?;
+    let pcr1 = extract_pcr(1)?;
+    let pcr2 = extract_pcr(2)?;
+
+    // Extract public_key: key "public_key" → Bytes
+    let public_key = payload_map.iter()
+        .find(|(k, _)| matches!(k, CborValue::Text(s) if s == "public_key"))
+        .and_then(|(_, v)| match v {
+            CborValue::Bytes(b) => Some(hex::encode(b)),
+            _ => None,
+        })
+        .unwrap_or_default();
+
+    Ok(ParsedAttestation { pcr0, pcr1, pcr2, public_key })
 }
 
 fn random_nonce() -> Vec<u8> {
