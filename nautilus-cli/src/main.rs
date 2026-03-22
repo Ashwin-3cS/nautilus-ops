@@ -7,6 +7,7 @@ pub mod config;
 mod init;
 mod init_ci;
 mod attest;
+mod status;
 mod sui_chain;
 
 /// Nautilus-Ops CLI — Self-Managed TEE Orchestrator for AWS Nitro Enclaves on Sui
@@ -40,6 +41,9 @@ enum Commands {
     /// Retrieve and verify the attestation document from a running enclave
     Attest(attest::AttestArgs),
 
+    /// Check enclave health, attestation, and on-chain status
+    Status(status::StatusArgs),
+
     /// Verify that an EC2 instance has Nitro Enclave support enabled
     Verify(VerifyArgs),
 
@@ -71,11 +75,12 @@ async fn main() -> Result<()> {
         Commands::Init(args) => init::run(args).await,
         Commands::Build(args) => build::run(args, cli.template).await,
         Commands::InitCi(args) => init_ci::run(args, cli.template).await,
-        Commands::Attest(args) => attest::run(args).await,
+        Commands::Attest(args) => attest::run(args, cli.template).await,
+        Commands::Status(args) => status::run(args, cli.template).await,
         Commands::Verify(args) => aws::verify_enclave_enabled(&args.instance_id).await,
         Commands::DeployContract(args) => sui_chain::deploy_contract(args).await,
-        Commands::RegisterEnclave(args) => sui_chain::register_enclave(args).await,
+        Commands::RegisterEnclave(args) => sui_chain::register_enclave(args, cli.template).await,
         Commands::UpdatePcrs(args) => sui_chain::update_pcrs(args).await,
-        Commands::VerifySignature(args) => sui_chain::verify_signature(args).await,
+        Commands::VerifySignature(args) => sui_chain::verify_signature(args, cli.template).await,
     }
 }

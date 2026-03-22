@@ -32,6 +32,7 @@ Developer Machine                       EC2 Instance (Nitro-enabled)
 │  register-enclave    │                │  │   Ed25519 keygen + sign    │  │
 │  verify-signature    │                │  │   NSM attestation          │  │
 │  attest              │                │  │                            │  │
+│  status              │                │  │                            │  │
 │                      │                │  └────────────────────────────┘  │
 └─────────────────────┘                └──────────────────────────────────┘
          │  Sui RPC
@@ -73,10 +74,11 @@ Developer Machine                       EC2 Instance (Nitro-enabled)
 nautilus-ops/
 ├── nautilus-cli/                  # CLI binary ("nautilus")
 │   └── src/
-│       ├── main.rs                # Clap entry point — 9 subcommands
+│       ├── main.rs                # Clap entry point — 10 subcommands
 │       ├── init.rs                # nautilus init — scaffold project from template
 │       ├── build.rs               # nautilus build — Docker + nitro-cli -> .eif + PCRs
 │       ├── init_ci.rs             # nautilus init-ci — generates GitHub Actions workflow
+│       ├── status.rs              # nautilus status — health, attestation & on-chain check
 │       ├── attest.rs              # nautilus attest — fetch attestation + parse CBOR
 │       ├── aws.rs                 # nautilus verify — EC2 enclave support check
 │       ├── sui_chain.rs           # deploy-contract, register-enclave, update-pcrs, verify-signature
@@ -303,9 +305,20 @@ nautilus verify-signature \
   --data "Nautilus"
 ```
 
+**Check Status**
+
+At any point, check the health of your entire stack:
+
+```bash
+nautilus status --host <EC2_IP>
+# ✔ Health:      GET <host>:<port>/health → 200 OK
+# ✔ Attestation: GET <host>:<port>/attestation → 200 OK (4503 bytes)
+# ✔ On-chain:    config 0x74a8... — PCRs match, enclave 0x5270...
+```
+
 ### What happens after setup
 
-After steps 1–5, any dApp on Sui can call `verify_signature()` or `verify_signed_data()` in their Move contract to verify that a payload was signed by your attested enclave. The CLI is only needed for setup and management — verification is fully on-chain and permissionless.
+After steps 1–6, any dApp on Sui can call `verify_signature()` or `verify_signed_data()` in their Move contract to verify that a payload was signed by your attested enclave. The CLI is only needed for setup and management — verification is fully on-chain and permissionless.
 
 ---
 
@@ -315,6 +328,7 @@ After steps 1–5, any dApp on Sui can call `verify_signature()` or `verify_sign
 |---------|-------------|----------|
 | `nautilus init` | Scaffold a new TEE project from a template (rust/ts/python) | git |
 | `nautilus build` | Build `.eif` from Dockerfile, extract PCR measurements | Docker |
+| `nautilus status` | Check enclave health, attestation, and on-chain PCR status | Enclave running |
 | `nautilus init-ci` | Generate GitHub Actions deployment workflow | — |
 | `nautilus attest` | Fetch attestation from enclave, parse CBOR, extract PCRs | Enclave running |
 | `nautilus verify` | Check if an EC2 instance supports Nitro Enclaves | `--features aws` |

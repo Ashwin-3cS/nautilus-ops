@@ -268,12 +268,12 @@ mod implementation {
         Ok(())
     }
 
-    pub async fn register_enclave(args: RegisterEnclaveArgs) -> Result<()> {
+    pub async fn register_enclave(args: RegisterEnclaveArgs, cli_template: Option<crate::config::Template>) -> Result<()> {
         println!("{}", "Nautilus On-Chain Registration".bold().cyan());
         println!("{}", "─".repeat(40).dimmed());
 
         let config = NautilusConfig::load(None).unwrap_or_default();
-        let template = crate::config::resolve_template(None, &config)?;
+        let template = crate::config::resolve_template(cli_template, &config)?;
 
         let package_id = resolve_id(&args.package_id, &config.sui.package_id, "package_id")?;
         let config_id = resolve_id(&args.config_object_id, &config.sui.config_object_id, "config_object_id")?;
@@ -541,12 +541,12 @@ mod implementation {
         Ok(())
     }
 
-    pub async fn verify_signature(args: VerifySignatureArgs) -> Result<()> {
+    pub async fn verify_signature(args: VerifySignatureArgs, cli_template: Option<crate::config::Template>) -> Result<()> {
         println!("{}", "Nautilus Signature Verification".bold().cyan());
         println!("{}", "─".repeat(40).dimmed());
 
         let config = NautilusConfig::load(None).unwrap_or_default();
-        let template = crate::config::resolve_template(None, &config)?;
+        let template = crate::config::resolve_template(cli_template, &config)?;
         let package_id = resolve_id(&args.package_id, &config.sui.package_id, "package_id")?;
         let type_pkg = config.sui.type_arg_package_id()
             .unwrap_or(&package_id)
@@ -734,7 +734,7 @@ mod implementation {
         );
     }
 
-    pub async fn register_enclave(_args: RegisterEnclaveArgs) -> Result<()> {
+    pub async fn register_enclave(_args: RegisterEnclaveArgs, _cli_template: Option<crate::config::Template>) -> Result<()> {
         anyhow::bail!(
             "Sui support is not compiled in.\n\
              Rebuild with: cargo build --features sui"
@@ -748,7 +748,7 @@ mod implementation {
         );
     }
 
-    pub async fn verify_signature(_args: VerifySignatureArgs) -> Result<()> {
+    pub async fn verify_signature(_args: VerifySignatureArgs, _cli_template: Option<crate::config::Template>) -> Result<()> {
         anyhow::bail!(
             "Sui support is not compiled in.\n\
              Rebuild with: cargo build --features sui"

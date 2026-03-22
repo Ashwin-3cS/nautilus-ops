@@ -45,6 +45,15 @@ impl Template {
         }
     }
 
+    /// Health check endpoint path for this template.
+    pub fn health_path(self) -> &'static str {
+        match self {
+            Template::Rust => "/health",
+            Template::Ts => "/health_check",
+            Template::Python => "/health",
+        }
+    }
+
     /// GitHub repository name for this template.
     pub fn repo_name(self) -> &'static str {
         match self {

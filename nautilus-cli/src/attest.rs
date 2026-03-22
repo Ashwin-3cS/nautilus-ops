@@ -24,9 +24,9 @@ pub struct AttestArgs {
     pub out: Option<PathBuf>,
 }
 
-pub async fn run(args: AttestArgs) -> Result<()> {
+pub async fn run(args: AttestArgs, cli_template: Option<Template>) -> Result<()> {
     let cfg = config::NautilusConfig::load(None).unwrap_or_default();
-    let template = config::resolve_template(None, &cfg)?;
+    let template = config::resolve_template(cli_template, &cfg)?;
 
     println!("{}", "Nautilus Attestation Client".bold().cyan());
     println!(
