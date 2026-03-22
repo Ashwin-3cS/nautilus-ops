@@ -24,13 +24,14 @@ Developer Machine                       EC2 Instance (Nitro-enabled)
 ┌─────────────────────┐                ┌──────────────────────────────────┐
 │  nautilus CLI        │                │  Bridge (socat / argonaut)       │
 │                      │  SSH / HTTP    │                                  │
-│  build               │───────────────>│  ┌────────────────────────────┐  │
-│  init-ci             │                │  │   Nitro Enclave (isolated)  │  │
-│  deploy-contract     │                │  │                            │  │
-│  update-pcrs         │                │  │   Your TEE App             │  │
-│  register-enclave    │                │  │   (Rust / TS / any lang)   │  │
-│  verify-signature    │                │  │   Ed25519 keygen + sign    │  │
-│  attest              │                │  │   NSM attestation          │  │
+│  init                │───────────────>│  ┌────────────────────────────┐  │
+│  build               │                │  │   Nitro Enclave (isolated)  │  │
+│  init-ci             │                │  │                            │  │
+│  deploy-contract     │                │  │   Your TEE App             │  │
+│  update-pcrs         │                │  │   (Rust / TS / any lang)   │  │
+│  register-enclave    │                │  │   Ed25519 keygen + sign    │  │
+│  verify-signature    │                │  │   NSM attestation          │  │
+│  attest              │                │  │                            │  │
 │                      │                │  └────────────────────────────┘  │
 └─────────────────────┘                └──────────────────────────────────┘
          │  Sui RPC
@@ -72,7 +73,8 @@ Developer Machine                       EC2 Instance (Nitro-enabled)
 nautilus-ops/
 ├── nautilus-cli/                  # CLI binary ("nautilus")
 │   └── src/
-│       ├── main.rs                # Clap entry point — 8 subcommands
+│       ├── main.rs                # Clap entry point — 9 subcommands
+│       ├── init.rs                # nautilus init — scaffold project from template
 │       ├── build.rs               # nautilus build — Docker + nitro-cli -> .eif + PCRs
 │       ├── init_ci.rs             # nautilus init-ci — generates GitHub Actions workflow
 │       ├── attest.rs              # nautilus attest — fetch attestation + parse CBOR
@@ -202,6 +204,18 @@ Once you have a TEE app running inside an enclave, use the CLI to manage the ful
 
 ### Full End-to-End Flow
 
+**Step 0: Scaffold a New Project**
+
+```bash
+nautilus init --template python my-enclave-app
+# Clones the template from GitHub, writes .nautilus.toml, generates CI workflow
+# Supported templates: rust, ts, python
+
+cd my-enclave-app
+```
+
+Or skip this step if you already have a TEE app — `nautilus` auto-detects the template from your project structure.
+
 **Step 1: Build the Enclave Image**
 
 ```bash
@@ -299,6 +313,7 @@ After steps 1–5, any dApp on Sui can call `verify_signature()` or `verify_sign
 
 | Command | Description | Requires |
 |---------|-------------|----------|
+| `nautilus init` | Scaffold a new TEE project from a template (rust/ts/python) | git |
 | `nautilus build` | Build `.eif` from Dockerfile, extract PCR measurements | Docker |
 | `nautilus init-ci` | Generate GitHub Actions deployment workflow | — |
 | `nautilus attest` | Fetch attestation from enclave, parse CBOR, extract PCRs | Enclave running |
@@ -308,7 +323,7 @@ After steps 1–5, any dApp on Sui can call `verify_signature()` or `verify_sign
 | `nautilus register-enclave` | Register enclave on-chain with attestation | `--features sui`, Sui CLI |
 | `nautilus verify-signature` | Verify an enclave signature on-chain | `--features sui`, Sui CLI |
 
-Run `nautilus <command> --help` for full flag details. Use `--template rust|ts|python` to override auto-detection.
+Run `nautilus <command> --help` for full flag details. Use `--template rust|ts|python` to override auto-detection (required for `init`, optional for other commands).
 
 ## Configuration
 

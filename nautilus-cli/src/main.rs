@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand};
 mod aws;
 mod build;
 pub mod config;
+mod init;
 mod init_ci;
 mod attest;
 mod sui_chain;
@@ -27,6 +28,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Initialize a new Nautilus TEE project from a template
+    Init(init::InitArgs),
+
     /// Build a Nitro Enclave Image (.eif) from a Dockerfile and extract PCR measurements
     Build(build::BuildArgs),
 
@@ -64,6 +68,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Commands::Init(args) => init::run(args).await,
         Commands::Build(args) => build::run(args, cli.template).await,
         Commands::InitCi(args) => init_ci::run(args, cli.template).await,
         Commands::Attest(args) => attest::run(args).await,

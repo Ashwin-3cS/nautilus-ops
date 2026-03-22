@@ -45,6 +45,15 @@ impl Template {
         }
     }
 
+    /// GitHub repository name for this template.
+    pub fn repo_name(self) -> &'static str {
+        match self {
+            Template::Rust => "nautilus-rust",
+            Template::Ts => "nautilus-ts",
+            Template::Python => "nautilus-python",
+        }
+    }
+
     /// Default on-chain verify function for this template.
     pub fn default_verify_function(self) -> &'static str {
         match self {
