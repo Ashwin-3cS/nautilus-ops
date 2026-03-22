@@ -24,9 +24,16 @@ pub struct InitCiArgs {
     pub output_dir: PathBuf,
 }
 
-pub async fn run(args: InitCiArgs, cli_template: Option<Template>) -> Result<()> {
+pub async fn run(mut args: InitCiArgs, cli_template: Option<Template>) -> Result<()> {
     let cfg = config::NautilusConfig::load(None).unwrap_or_default();
     let template = config::resolve_template(cli_template, &cfg)?;
+
+    // Auto-detect Containerfile if default Dockerfile doesn't exist
+    if args.dockerfile == PathBuf::from("Dockerfile") && !args.dockerfile.exists() {
+        if PathBuf::from("Containerfile").exists() {
+            args.dockerfile = PathBuf::from("Containerfile");
+        }
+    }
 
     println!("{}", "Nautilus CI/CD Scaffold".bold().cyan());
     println!(
