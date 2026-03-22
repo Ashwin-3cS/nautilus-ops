@@ -38,7 +38,7 @@ pub async fn run(args: AttestArgs) -> Result<()> {
 
     match template {
         Template::Rust => run_rust_attest(args).await,
-        Template::Ts => run_ts_attest(args).await,
+        Template::Ts | Template::Python => run_ts_attest(args, template).await,
     }
 }
 
@@ -127,26 +127,27 @@ async fn run_rust_attest(args: AttestArgs) -> Result<()> {
     Ok(())
 }
 
-/// TS template: HTTP GET /attestation (port 3000 default).
+/// TS/Python template: HTTP GET /attestation (port from template default).
 /// Uses a raw TCP HTTP/1.1 request to avoid requiring reqwest without `sui` feature.
-async fn run_ts_attest(args: AttestArgs) -> Result<()> {
-    let port = args.port.unwrap_or(3000);
-    let url = format!("http://{}:{}/attestation", args.host, port);
+async fn run_ts_attest(args: AttestArgs, template: Template) -> Result<()> {
+    let port = args.port.unwrap_or(template.default_http_port());
+    let path = template.attestation_path();
+    let url = format!("http://{}:{}{}", args.host, port, path);
     println!("{} Fetching attestation from {}", "→".cyan(), url.cyan());
 
     let addr = format!("{}:{}", args.host, port);
     let mut stream = TcpStream::connect(&addr)
         .with_context(|| format!(
             "Cannot reach enclave at {}.\n\
-             Ensure the enclave is running and the argonaut bridge is active.",
+             Ensure the enclave is running and the bridge is active.",
             addr
         ))?;
 
     stream.set_read_timeout(Some(Duration::from_secs(15)))?;
 
     let http_req = format!(
-        "GET /attestation HTTP/1.1\r\nHost: {}:{}\r\nConnection: close\r\n\r\n",
-        args.host, port
+        "GET {} HTTP/1.1\r\nHost: {}:{}\r\nConnection: close\r\n\r\n",
+        path, args.host, port
     );
     stream.write_all(http_req.as_bytes())?;
 

@@ -13,6 +13,8 @@ pub enum Template {
     Rust,
     /// TypeScript-based TEE app (nautilus-ts, uses Bun + argonaut)
     Ts,
+    /// Python-based TEE app (nautilus-python, uses pynacl + stdlib)
+    Python,
 }
 
 impl Template {
@@ -21,6 +23,7 @@ impl Template {
         match self {
             Template::Rust => 4000,
             Template::Ts => 3000,
+            Template::Python => 5000,
         }
     }
 
@@ -29,6 +32,7 @@ impl Template {
         match self {
             Template::Rust => "/get_attestation",
             Template::Ts => "/attestation",
+            Template::Python => "/attestation",
         }
     }
 
@@ -37,6 +41,7 @@ impl Template {
         match self {
             Template::Rust => "/sign_name",
             Template::Ts => "/sign",
+            Template::Python => "/sign",
         }
     }
 
@@ -45,6 +50,7 @@ impl Template {
         match self {
             Template::Rust => "verify_signed_name",
             Template::Ts => "verify_signed_data",
+            Template::Python => "verify_signed_data",
         }
     }
 }
@@ -54,6 +60,7 @@ impl std::fmt::Display for Template {
         match self {
             Template::Rust => write!(f, "rust"),
             Template::Ts => write!(f, "ts"),
+            Template::Python => write!(f, "python"),
         }
     }
 }
@@ -131,6 +138,11 @@ pub fn detect_template(dir: Option<&Path>) -> Result<Template> {
         return Ok(Template::Ts);
     }
 
+    // Python template: has requirements.txt + app.py
+    if base.join("requirements.txt").is_file() && base.join("app.py").is_file() {
+        return Ok(Template::Python);
+    }
+
     // Rust template: has Cargo.toml (but not the CLI workspace — look for src/ with Rust files)
     if base.join("Cargo.toml").is_file() {
         return Ok(Template::Rust);
@@ -138,7 +150,7 @@ pub fn detect_template(dir: Option<&Path>) -> Result<Template> {
 
     anyhow::bail!(
         "Could not detect project template in {}.\n\
-         Expected either argonaut/ + package.json (TypeScript) or Cargo.toml (Rust).\n\
+         Expected argonaut/ + package.json (TS), requirements.txt + app.py (Python), or Cargo.toml (Rust).\n\
          Use --template to specify manually.",
         base.display()
     )
@@ -207,6 +219,14 @@ mod tests {
     }
 
     #[test]
+    fn test_detect_template_python() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("requirements.txt"), "pynacl>=1.5").unwrap();
+        std::fs::write(tmp.path().join("app.py"), "# python app").unwrap();
+        assert_eq!(detect_template(Some(tmp.path())).unwrap(), Template::Python);
+    }
+
+    #[test]
     fn test_detect_template_unknown_fails() {
         let tmp = TempDir::new().unwrap();
         assert!(detect_template(Some(tmp.path())).is_err());
@@ -237,11 +257,13 @@ mod tests {
     fn test_template_default_ports() {
         assert_eq!(Template::Rust.default_http_port(), 4000);
         assert_eq!(Template::Ts.default_http_port(), 3000);
+        assert_eq!(Template::Python.default_http_port(), 5000);
     }
 
     #[test]
     fn test_template_attestation_paths() {
         assert_eq!(Template::Rust.attestation_path(), "/get_attestation");
         assert_eq!(Template::Ts.attestation_path(), "/attestation");
+        assert_eq!(Template::Python.attestation_path(), "/attestation");
     }
 }

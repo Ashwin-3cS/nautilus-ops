@@ -65,7 +65,7 @@ pub async fn run(args: BuildArgs, cli_template: Option<Template>) -> Result<()> 
     println!("{}", "─".repeat(40).dimmed());
 
     match template {
-        Template::Rust => run_rust_build(args).await,
+        Template::Rust | Template::Python => run_rust_build(args).await,
         Template::Ts => run_ts_build(args).await,
     }
 }
