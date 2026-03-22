@@ -5,6 +5,7 @@ Self-managed TEE orchestrator for AWS Nitro Enclaves on the Sui blockchain. Buil
 Supports multiple template types:
 - **Rust** — [nautilus-rust](https://github.com/Ashwin-3cS/nautilus-rust/) using the `nautilus-enclave` library
 - **TypeScript** — [nautilus-ts](https://github.com/Ashwin-3cS/nautilus-ts/) (fork of [unconfirmedlabs/nautilus-ts](https://github.com/unconfirmedlabs/nautilus-ts)) using Bun + argonaut
+- **Python** — [nautilus-python](https://github.com/Ashwin-3cS/nautilus-python/) using pynacl + stdlib HTTP server
 
 ## How It Works
 
@@ -46,16 +47,16 @@ Developer Machine                       EC2 Instance (Nitro-enabled)
 
 ## Supported Templates
 
-| Aspect | Rust Template | TS Template |
-|--------|--------------|-------------|
-| Repo | [nautilus-rust](https://github.com/Ashwin-3cS/nautilus-rust/) | [nautilus-ts](https://github.com/Ashwin-3cS/nautilus-ts/) (fork of [unconfirmedlabs/nautilus-ts](https://github.com/unconfirmedlabs/nautilus-ts)) |
-| Default HTTP port | 4000 | 3000 |
-| Attestation endpoint | `GET /get_attestation` | `GET /attestation` |
-| Sign endpoint | `POST /sign_name` (JSON body) | `POST /sign` (raw bytes) |
-| VSOCK bridge | socat (systemd services) | argonaut host binary |
-| Build | `docker build` + `nitro-cli build-enclave` | `make` (docker multi-stage, EIF built inside) |
-| On-chain verify | `verify_signed_name` (BCS + IntentMessage) | `verify_signed_data` (blake2b256 + raw bytes) |
-| Auto-detection | `Cargo.toml` in project root | `argonaut/` dir + `package.json` |
+| Aspect | Rust Template | TS Template | Python Template |
+|--------|--------------|-------------|-----------------|
+| Repo | [nautilus-rust](https://github.com/Ashwin-3cS/nautilus-rust/) | [nautilus-ts](https://github.com/Ashwin-3cS/nautilus-ts/) (fork of [unconfirmedlabs/nautilus-ts](https://github.com/unconfirmedlabs/nautilus-ts)) | [nautilus-python](https://github.com/Ashwin-3cS/nautilus-python/) |
+| Default HTTP port | 4000 | 3000 | 5000 |
+| Attestation endpoint | `GET /get_attestation` | `GET /attestation` | `GET /attestation` |
+| Sign endpoint | `POST /sign_name` (JSON body) | `POST /sign` (raw bytes) | `POST /sign` (raw bytes) |
+| VSOCK bridge | socat (systemd services) | argonaut host binary | socat (systemd services) |
+| Build | `docker build` + stagex `eif_build` | `make` (docker multi-stage, EIF built inside) | `make` (docker multi-stage, stagex `eif_build`) |
+| On-chain verify | `verify_signed_name` (BCS + IntentMessage) | `verify_signed_data` (blake2b256 + raw bytes) | `verify_signed_data` (blake2b256 + raw bytes) |
+| Auto-detection | `Cargo.toml` in project root | `argonaut/` dir + `package.json` | `requirements.txt` + `app.py` |
 
 ## Trust Chain
 
@@ -191,6 +192,7 @@ By default (without the `nsm` feature), all NSM calls return deterministic mock 
 |----------|-----------|-------------|
 | Rust | [nautilus-rust](https://github.com/Ashwin-3cS/nautilus-rust/) | Axum sign-server with `/sign_name`, `/get_attestation`, `/health`. Uses `nautilus-enclave` directly |
 | TypeScript | [nautilus-ts](https://github.com/Ashwin-3cS/nautilus-ts/) | Bun + argonaut framework with `/sign`, `/attestation`, `/health_check`. Fork of [unconfirmedlabs/nautilus-ts](https://github.com/unconfirmedlabs/nautilus-ts) |
+| Python | [nautilus-python](https://github.com/Ashwin-3cS/nautilus-python/) | stdlib HTTP server with `/sign`, `/attestation`, `/health`. Uses pynacl for Ed25519, direct NSM ioctl for attestation |
 
 ---
 
@@ -218,7 +220,7 @@ nautilus build --template ts
 ```bash
 nautilus init-ci --cpu-count 2 --memory-mib 4096 -f Containerfile
 # Creates .github/workflows/nautilus-deploy.yml
-# Template is auto-detected (Cargo.toml -> Rust, argonaut/ + package.json -> TS)
+# Template is auto-detected (Cargo.toml -> Rust, argonaut/ + package.json -> TS, requirements.txt + app.py -> Python)
 
 # Set GitHub secrets: TEE_EC2_HOST, TEE_EC2_USER, TEE_EC2_SSH_KEY
 # Push to main -> enclave deploys automatically
@@ -279,7 +281,7 @@ nautilus verify-signature \
   --enclave-id <ENCLAVE_OBJECT_ID> \
   --data "Alice"
 
-# TS template — signs blake2b256(raw_data) directly
+# TS / Python template — signs blake2b256(raw_data) directly
 nautilus verify-signature \
   --template ts \
   --host <EC2_IP> \
@@ -306,7 +308,7 @@ After steps 1–5, any dApp on Sui can call `verify_signature()` or `verify_sign
 | `nautilus register-enclave` | Register enclave on-chain with attestation | `--features sui`, Sui CLI |
 | `nautilus verify-signature` | Verify an enclave signature on-chain | `--features sui`, Sui CLI |
 
-Run `nautilus <command> --help` for full flag details. Use `--template rust|ts` to override auto-detection.
+Run `nautilus <command> --help` for full flag details. Use `--template rust|ts|python` to override auto-detection.
 
 ## Configuration
 
@@ -374,7 +376,7 @@ IntentMessage { intent: u8, timestamp_ms: u64, data: SignedName }
 → on-chain: verify_signed_name() reconstructs and checks
 ```
 
-**TS template — blake2b256 + raw bytes:**
+**TS / Python template — blake2b256 + raw bytes:**
 ```
 raw_data → blake2b256(data) → Ed25519 sign
 → on-chain: verify_signed_data() hashes and checks
@@ -423,7 +425,7 @@ cargo test
 
 # Individual crates
 cargo test -p nautilus-enclave                    # 7 tests — crypto + attestation
-cargo test -p nautilus-cli                        # 27 tests — CLI, config, build, init-ci
+cargo test -p nautilus-cli                        # 28 tests — CLI, config, build, init-ci
 cargo test -p nautilus-cli --features sui         # includes on-chain config tests
 ```
 
@@ -433,6 +435,7 @@ cargo test -p nautilus-cli --features sui         # includes on-chain config tes
 |-----------|-------------|
 | [nautilus-rust](https://github.com/Ashwin-3cS/nautilus-rust/) | Rust TEE template — Axum sign-server powered by `nautilus-enclave`. Endpoints: `/sign_name`, `/get_attestation`, `/health` |
 | [nautilus-ts](https://github.com/Ashwin-3cS/nautilus-ts/) | TypeScript TEE template — Bun + argonaut framework. Fork of [unconfirmedlabs/nautilus-ts](https://github.com/unconfirmedlabs/nautilus-ts). Endpoints: `/sign`, `/attestation`, `/health_check` |
+| [nautilus-python](https://github.com/Ashwin-3cS/nautilus-python/) | Python TEE template — stdlib HTTP server with pynacl Ed25519 and direct NSM ioctl. Endpoints: `/sign`, `/attestation`, `/health` |
 
 ## Security
 
