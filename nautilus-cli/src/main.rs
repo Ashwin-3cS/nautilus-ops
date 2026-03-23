@@ -8,6 +8,7 @@ mod init;
 mod init_ci;
 mod attest;
 mod status;
+mod logs;
 mod sui_chain;
 
 /// Nautilus-Ops CLI — Self-Managed TEE Orchestrator for AWS Nitro Enclaves on Sui
@@ -44,6 +45,9 @@ enum Commands {
     /// Check enclave health, attestation, and on-chain status
     Status(status::StatusArgs),
 
+    /// Fetch recent logs from a running enclave
+    Logs(logs::LogsArgs),
+
     /// Verify that an EC2 instance has Nitro Enclave support enabled
     Verify(VerifyArgs),
 
@@ -77,6 +81,7 @@ async fn main() -> Result<()> {
         Commands::InitCi(args) => init_ci::run(args, cli.template).await,
         Commands::Attest(args) => attest::run(args, cli.template).await,
         Commands::Status(args) => status::run(args, cli.template).await,
+        Commands::Logs(args) => logs::run(args, cli.template).await,
         Commands::Verify(args) => aws::verify_enclave_enabled(&args.instance_id).await,
         Commands::DeployContract(args) => sui_chain::deploy_contract(args).await,
         Commands::RegisterEnclave(args) => sui_chain::register_enclave(args, cli.template).await,

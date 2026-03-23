@@ -33,6 +33,7 @@ Developer Machine                       EC2 Instance (Nitro-enabled)
 │  verify-signature    │                │  │   NSM attestation          │  │
 │  attest              │                │  │                            │  │
 │  status              │                │  │                            │  │
+│  logs                │                │  │                            │  │
 │                      │                │  └────────────────────────────┘  │
 └─────────────────────┘                └──────────────────────────────────┘
          │  Sui RPC
@@ -55,6 +56,7 @@ Developer Machine                       EC2 Instance (Nitro-enabled)
 | Default HTTP port | 4000 | 3000 | 5000 |
 | Attestation endpoint | `GET /get_attestation` | `GET /attestation` | `GET /attestation` |
 | Sign endpoint | `POST /sign_name` (JSON body) | `POST /sign` (raw bytes) | `POST /sign` (raw bytes) |
+| Logs endpoint | `GET /logs?lines=N` | `GET /logs?lines=N` | `GET /logs?lines=N` |
 | VSOCK bridge | socat (systemd services) | argonaut host binary | socat (systemd services) |
 | Build | `docker build` + stagex `eif_build` | `make` (docker multi-stage, EIF built inside) | `make` (docker multi-stage, stagex `eif_build`) |
 | On-chain verify | `verify_signed_name` (BCS + IntentMessage) | `verify_signed_data` (blake2b256 + raw bytes) | `verify_signed_data` (blake2b256 + raw bytes) |
@@ -74,12 +76,13 @@ Developer Machine                       EC2 Instance (Nitro-enabled)
 nautilus-ops/
 ├── nautilus-cli/                  # CLI binary ("nautilus")
 │   └── src/
-│       ├── main.rs                # Clap entry point — 10 subcommands
+│       ├── main.rs                # Clap entry point — 11 subcommands
 │       ├── init.rs                # nautilus init — scaffold project from template
 │       ├── build.rs               # nautilus build — Docker + nitro-cli -> .eif + PCRs
 │       ├── init_ci.rs             # nautilus init-ci — generates GitHub Actions workflow
 │       ├── status.rs              # nautilus status — health, attestation & on-chain check
 │       ├── attest.rs              # nautilus attest — fetch attestation + parse CBOR
+│       ├── logs.rs                # nautilus logs — fetch/follow enclave logs
 │       ├── aws.rs                 # nautilus verify — EC2 enclave support check
 │       ├── sui_chain.rs           # deploy-contract, register-enclave, update-pcrs, verify-signature
 │       └── config.rs              # .nautilus.toml persistence, template detection
@@ -305,6 +308,18 @@ nautilus verify-signature \
   --data "Nautilus"
 ```
 
+**View Enclave Logs**
+
+Fetch recent logs or follow them in real time:
+
+```bash
+# Fetch the last 50 log lines
+nautilus logs --host <EC2_IP> -n 50
+
+# Follow logs continuously (like tail -f)
+nautilus logs --host <EC2_IP> --follow
+```
+
 **Check Status**
 
 At any point, check the health of your entire stack:
@@ -329,6 +344,7 @@ After steps 1–6, any dApp on Sui can call `verify_signature()` or `verify_sign
 | `nautilus init` | Scaffold a new TEE project from a template (rust/ts/python) | git |
 | `nautilus build` | Build `.eif` from Dockerfile, extract PCR measurements | Docker |
 | `nautilus status` | Check enclave health, attestation, and on-chain PCR status | Enclave running |
+| `nautilus logs` | Fetch recent logs or follow live logs from a running enclave | Enclave running |
 | `nautilus init-ci` | Generate GitHub Actions deployment workflow | — |
 | `nautilus attest` | Fetch attestation from enclave, parse CBOR, extract PCRs | Enclave running |
 | `nautilus verify` | Check if an EC2 instance supports Nitro Enclaves | `--features aws` |
@@ -462,7 +478,7 @@ cargo test -p nautilus-cli --features sui         # includes on-chain config tes
 
 | Repository | Description |
 |-----------|-------------|
-| [nautilus-rust](https://github.com/Ashwin-3cS/nautilus-rust/) | Rust TEE template — Axum sign-server powered by `nautilus-enclave`. Endpoints: `/sign_name`, `/get_attestation`, `/health` |
+| [nautilus-rust](https://github.com/Ashwin-3cS/nautilus-rust/) | Rust TEE template — Axum sign-server powered by `nautilus-enclave`. Endpoints: `/sign_name`, `/get_attestation`, `/health`, `/logs` |
 | [nautilus-ts](https://github.com/Ashwin-3cS/nautilus-ts/) | TypeScript TEE template — Bun + argonaut framework. Fork of [unconfirmedlabs/nautilus-ts](https://github.com/unconfirmedlabs/nautilus-ts). Endpoints: `/sign`, `/attestation`, `/health_check` |
 | [nautilus-python](https://github.com/Ashwin-3cS/nautilus-python/) | Python TEE template — stdlib HTTP server with pynacl Ed25519 and direct NSM ioctl. Endpoints: `/sign`, `/attestation`, `/health` |
 

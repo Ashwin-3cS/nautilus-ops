@@ -54,6 +54,11 @@ impl Template {
         }
     }
 
+    /// Logs endpoint path for this template.
+    pub fn logs_path(self) -> &'static str {
+        "/logs"
+    }
+
     /// GitHub repository name for this template.
     pub fn repo_name(self) -> &'static str {
         match self {
