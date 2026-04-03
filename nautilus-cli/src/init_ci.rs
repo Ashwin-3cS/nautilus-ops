@@ -86,6 +86,23 @@ pub async fn run(mut args: InitCiArgs, cli_template: Option<Template>) -> Result
         );
     }
 
+    if template == Template::MessagingRelayer {
+        println!();
+        println!("{}", "➜  Optional GitHub Secrets".bold().yellow());
+        println!("   Configure these only if you want to override Walrus sync defaults\n");
+        for (name, desc) in [
+            ("RELAYER_WALRUS_SYNC_INTERVAL_SECS", "Seconds between timer-based Walrus sync cycles"),
+            ("RELAYER_WALRUS_SYNC_MESSAGE_THRESHOLD", "Message count that triggers immediate Walrus sync"),
+        ] {
+            println!(
+                "   {} {:<20}  {}",
+                "▶".dimmed(),
+                name.cyan().bold(),
+                desc.dimmed()
+            );
+        }
+    }
+
     println!();
     println!(
         "{} Push to {} to trigger your first deployment.",
@@ -797,6 +814,8 @@ jobs:
           GROUPS_PACKAGE_ID: ${{{{ secrets.RELAYER_GROUPS_PACKAGE_ID }}}}
           WALRUS_PUBLISHER_URL: ${{{{ secrets.RELAYER_WALRUS_PUBLISHER_URL }}}}
           WALRUS_AGGREGATOR_URL: ${{{{ secrets.RELAYER_WALRUS_AGGREGATOR_URL }}}}
+          WALRUS_SYNC_INTERVAL_SECS: ${{{{ secrets.RELAYER_WALRUS_SYNC_INTERVAL_SECS }}}}
+          WALRUS_SYNC_MESSAGE_THRESHOLD: ${{{{ secrets.RELAYER_WALRUS_SYNC_MESSAGE_THRESHOLD }}}}
         run: |
           echo "$EC2_KEY" > /tmp/deploy_key && chmod 600 /tmp/deploy_key
           SSH_OPTS="-o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=10"
@@ -808,7 +827,7 @@ jobs:
             exit 1
           fi
           for i in \$(seq 1 10); do
-            if printf 'SUI_RPC_URL=${{SUI_RPC_URL}}\nGROUPS_PACKAGE_ID=${{GROUPS_PACKAGE_ID}}\nWALRUS_PUBLISHER_URL=${{WALRUS_PUBLISHER_URL}}\nWALRUS_AGGREGATOR_URL=${{WALRUS_AGGREGATOR_URL}}\n' \
+            if printf 'SUI_RPC_URL=${{SUI_RPC_URL}}\nGROUPS_PACKAGE_ID=${{GROUPS_PACKAGE_ID}}\nWALRUS_PUBLISHER_URL=${{WALRUS_PUBLISHER_URL}}\nWALRUS_AGGREGATOR_URL=${{WALRUS_AGGREGATOR_URL}}\nWALRUS_SYNC_INTERVAL_SECS=${{WALRUS_SYNC_INTERVAL_SECS}}\nWALRUS_SYNC_MESSAGE_THRESHOLD=${{WALRUS_SYNC_MESSAGE_THRESHOLD}}\n' \
                  | socat - VSOCK-CONNECT:\$CID:7000 2>/dev/null; then
               echo "Config sent to enclave CID=\$CID"
               break
