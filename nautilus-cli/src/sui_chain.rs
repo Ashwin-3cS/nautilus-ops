@@ -554,7 +554,11 @@ mod implementation {
 
         match template {
             crate::config::Template::Rust => verify_signature_rust(&args, &package_id, &type_pkg).await,
-            crate::config::Template::Ts | crate::config::Template::Python => verify_signature_ts(&args, &package_id, &type_pkg, template).await,
+            crate::config::Template::Ts
+            | crate::config::Template::Python
+            | crate::config::Template::MessagingRelayer => {
+                verify_signature_ts(&args, &package_id, &type_pkg, template).await
+            }
         }
     }
 
@@ -628,7 +632,8 @@ mod implementation {
         print_verify_result(&output)
     }
 
-    /// TS template: POST raw data to /sign, verify via on-chain verify_signed_data.
+    /// TS, Python, and messaging-relayer templates: POST raw data and verify via
+    /// on-chain verify_signed_data.
     async fn verify_signature_ts(args: &VerifySignatureArgs, package_id: &str, type_pkg: &str, template: crate::config::Template) -> Result<()> {
         let port = args.port.unwrap_or_else(|| template.default_http_port());
         let endpoint = args.sign_endpoint.as_deref().unwrap_or(template.default_sign_endpoint());

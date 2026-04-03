@@ -189,7 +189,7 @@ pub fn detect_template(dir: Option<&Path>) -> Result<Template> {
 
     anyhow::bail!(
         "Could not detect project template in {}.\n\
-         Expected argonaut/ + package.json (TS), requirements.txt + app.py (Python), or Cargo.toml (Rust).\n\
+         Expected argonaut/ + package.json (TS), requirements.txt + app.py (Python), Cargo.toml + src/relayer/ (messaging-relayer), or Cargo.toml (Rust).\n\
          Use --template to specify manually.",
         base.display()
     )
@@ -266,6 +266,17 @@ mod tests {
     }
 
     #[test]
+    fn test_detect_template_messaging_relayer() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("Cargo.toml"), "[package]").unwrap();
+        std::fs::create_dir_all(tmp.path().join("src").join("relayer")).unwrap();
+        assert_eq!(
+            detect_template(Some(tmp.path())).unwrap(),
+            Template::MessagingRelayer
+        );
+    }
+
+    #[test]
     fn test_detect_template_unknown_fails() {
         let tmp = TempDir::new().unwrap();
         assert!(detect_template(Some(tmp.path())).is_err());
@@ -297,6 +308,7 @@ mod tests {
         assert_eq!(Template::Rust.default_http_port(), 4000);
         assert_eq!(Template::Ts.default_http_port(), 3000);
         assert_eq!(Template::Python.default_http_port(), 5000);
+        assert_eq!(Template::MessagingRelayer.default_http_port(), 4000);
     }
 
     #[test]
@@ -304,5 +316,9 @@ mod tests {
         assert_eq!(Template::Rust.attestation_path(), "/get_attestation");
         assert_eq!(Template::Ts.attestation_path(), "/attestation");
         assert_eq!(Template::Python.attestation_path(), "/attestation");
+        assert_eq!(
+            Template::MessagingRelayer.attestation_path(),
+            "/get_attestation"
+        );
     }
 }

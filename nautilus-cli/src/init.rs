@@ -13,7 +13,7 @@ const GITHUB_ORG: &str = "Ashwin-3cS";
 
 #[derive(Args, Debug)]
 pub struct InitArgs {
-    /// Template to scaffold (rust, ts, or python)
+    /// Template to scaffold (rust, ts, python, or messaging-relayer)
     #[arg(long, value_enum)]
     pub template: Template,
 

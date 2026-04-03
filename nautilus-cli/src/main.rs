@@ -30,7 +30,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Initialize a new Nautilus TEE project from a template
+    /// Initialize a new Nautilus TEE project from a template (including messaging-relayer)
     Init(init::InitArgs),
 
     /// Build a Nitro Enclave Image (.eif) from a Dockerfile and extract PCR measurements
@@ -60,7 +60,7 @@ enum Commands {
     /// Update expected PCR values in the on-chain EnclaveConfig
     UpdatePcrs(sui_chain::UpdatePcrsArgs),
 
-    /// Verify an enclave signature on-chain by calling sign_name and verify_signed_name
+    /// Verify an enclave signature on-chain using the selected template's signing flow
     VerifySignature(sui_chain::VerifySignatureArgs),
 }
 
