@@ -73,6 +73,8 @@ pub async fn run(mut args: InitCiArgs, cli_template: Option<Template>) -> Result
     if template == Template::MessagingRelayer {
         secrets.push(("RELAYER_SUI_RPC_URL",      "Sui fullnode RPC URL (e.g. https://fullnode.testnet.sui.io:443)"));
         secrets.push(("RELAYER_GROUPS_PACKAGE_ID", "Permissioned groups package ID on Sui"));
+        secrets.push(("RELAYER_WALRUS_PUBLISHER_URL", "Walrus publisher URL used for blob writes"));
+        secrets.push(("RELAYER_WALRUS_AGGREGATOR_URL", "Walrus aggregator URL used for blob reads"));
     }
 
     for (name, desc) in secrets.iter() {
@@ -793,6 +795,8 @@ jobs:
           EC2_KEY: ${{{{ secrets.TEE_EC2_SSH_KEY }}}}
           SUI_RPC_URL: ${{{{ secrets.RELAYER_SUI_RPC_URL }}}}
           GROUPS_PACKAGE_ID: ${{{{ secrets.RELAYER_GROUPS_PACKAGE_ID }}}}
+          WALRUS_PUBLISHER_URL: ${{{{ secrets.RELAYER_WALRUS_PUBLISHER_URL }}}}
+          WALRUS_AGGREGATOR_URL: ${{{{ secrets.RELAYER_WALRUS_AGGREGATOR_URL }}}}
         run: |
           echo "$EC2_KEY" > /tmp/deploy_key && chmod 600 /tmp/deploy_key
           SSH_OPTS="-o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=10"
@@ -804,7 +808,7 @@ jobs:
             exit 1
           fi
           for i in \$(seq 1 10); do
-            if printf 'SUI_RPC_URL=${{SUI_RPC_URL}}\nGROUPS_PACKAGE_ID=${{GROUPS_PACKAGE_ID}}\n' \
+            if printf 'SUI_RPC_URL=${{SUI_RPC_URL}}\nGROUPS_PACKAGE_ID=${{GROUPS_PACKAGE_ID}}\nWALRUS_PUBLISHER_URL=${{WALRUS_PUBLISHER_URL}}\nWALRUS_AGGREGATOR_URL=${{WALRUS_AGGREGATOR_URL}}\n' \
                  | socat - VSOCK-CONNECT:\$CID:7000 2>/dev/null; then
               echo "Config sent to enclave CID=\$CID"
               break
@@ -816,10 +820,59 @@ jobs:
           rm -f /tmp/deploy_key
 
       - name: Setup VSOCK bridge
-{env}
+        env:
+          EC2_HOST: ${{{{ secrets.TEE_EC2_HOST }}}}
+          EC2_USER: ${{{{ secrets.TEE_EC2_USER }}}}
+          EC2_KEY: ${{{{ secrets.TEE_EC2_SSH_KEY }}}}
+          SUI_RPC_URL: ${{{{ secrets.RELAYER_SUI_RPC_URL }}}}
+          WALRUS_PUBLISHER_URL: ${{{{ secrets.RELAYER_WALRUS_PUBLISHER_URL }}}}
+          WALRUS_AGGREGATOR_URL: ${{{{ secrets.RELAYER_WALRUS_AGGREGATOR_URL }}}}
         run: |
-{preamble}
+          echo "$EC2_KEY" > /tmp/deploy_key && chmod 600 /tmp/deploy_key
+          SSH_OPTS="-o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=10"
+          ssh $SSH_OPTS -i /tmp/deploy_key "$EC2_USER@$EC2_HOST" "SUI_RPC_URL='${{{{ SUI_RPC_URL }}}}' WALRUS_PUBLISHER_URL='${{{{ WALRUS_PUBLISHER_URL }}}}' WALRUS_AGGREGATOR_URL='${{{{ WALRUS_AGGREGATOR_URL }}}}' bash -s" << 'REMOTE'
           set -e
+          extract_url_host() {{
+            printf '%s' "$1" | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://(\[[^]]+\]|[^/:]+).*#\1#'
+          }}
+
+          extract_url_port() {{
+            url="$1"
+            explicit_port=$(printf '%s' "$url" | sed -nE 's#^[a-zA-Z][a-zA-Z0-9+.-]*://[^/:]+:([0-9]+).*$#\1#p')
+            if [ -n "$explicit_port" ]; then
+              printf '%s' "$explicit_port"
+              return
+            fi
+            scheme=$(printf '%s' "$url" | sed -nE 's#^([a-zA-Z][a-zA-Z0-9+.-]*)://.*#\1#p')
+            case "$scheme" in
+              https) printf '443' ;;
+              http) printf '80' ;;
+              *) printf '443' ;;
+            esac
+          }}
+
+          create_outbound_service() {{
+            service_name="$1"
+            vsock_port="$2"
+            target_url="$3"
+            target_host=$(extract_url_host "$target_url")
+            target_port=$(extract_url_port "$target_url")
+
+            sudo tee "/etc/systemd/system/${{service_name}}.service" > /dev/null <<EOF
+          [Unit]
+          Description=${{service_name}} (VSOCK:${{vsock_port}} -> ${{target_host}}:${{target_port}})
+          After=network.target
+
+          [Service]
+          ExecStart=/usr/bin/socat VSOCK-LISTEN:${{vsock_port}},fork,reuseaddr TCP:${{target_host}}:${{target_port}}
+          Restart=always
+          RestartSec=2
+
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+          }}
+
           for i in 1 2 3 4 5; do
             CID=$(sudo nitro-cli describe-enclaves | jq -r '.[0].EnclaveCID // empty')
             [ -n "$CID" ] && break
@@ -834,6 +887,9 @@ jobs:
 
           sudo pkill -f "socat.*4000" 2>/dev/null || true
           sudo pkill -f "socat.*5000" 2>/dev/null || true
+          sudo pkill -f "socat.*8101" 2>/dev/null || true
+          sudo pkill -f "socat.*8102" 2>/dev/null || true
+          sudo pkill -f "socat.*8103" 2>/dev/null || true
 
           sudo tee /etc/systemd/system/nautilus-bridge.service > /dev/null <<EOF
           [Unit]
@@ -863,10 +919,20 @@ jobs:
           WantedBy=multi-user.target
           EOF
 
+          create_outbound_service "nautilus-outbound-sui" 8101 "${{{{ SUI_RPC_URL }}}}"
+          create_outbound_service "nautilus-outbound-walrus-publisher" 8102 "${{{{ WALRUS_PUBLISHER_URL }}}}"
+          create_outbound_service "nautilus-outbound-walrus-aggregator" 8103 "${{{{ WALRUS_AGGREGATOR_URL }}}}"
+
           sudo systemctl daemon-reload
-          sudo systemctl enable --now nautilus-bridge.service nautilus-logs.service
+          sudo systemctl enable --now \
+            nautilus-bridge.service \
+            nautilus-logs.service \
+            nautilus-outbound-sui.service \
+            nautilus-outbound-walrus-publisher.service \
+            nautilus-outbound-walrus-aggregator.service
           sleep 2
           sudo systemctl is-active nautilus-bridge.service
+          sudo systemctl is-active nautilus-outbound-sui.service
           echo "Bridge active: CID=$CID  TCP:4000 -> VSOCK:4000"
           REMOTE
           rm -f /tmp/deploy_key
