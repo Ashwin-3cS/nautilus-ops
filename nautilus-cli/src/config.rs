@@ -15,6 +15,10 @@ pub enum Template {
     Ts,
     /// Python-based TEE app (nautilus-python, uses pynacl + stdlib)
     Python,
+    /// Sui messaging relayer TEE app (nautilus-messaging-relayer)
+    #[serde(rename = "messaging-relayer")]
+    #[clap(name = "messaging-relayer")]
+    MessagingRelayer,
 }
 
 impl Template {
@@ -24,6 +28,7 @@ impl Template {
             Template::Rust => 4000,
             Template::Ts => 3000,
             Template::Python => 5000,
+            Template::MessagingRelayer => 4000,
         }
     }
 
@@ -33,6 +38,7 @@ impl Template {
             Template::Rust => "/get_attestation",
             Template::Ts => "/attestation",
             Template::Python => "/attestation",
+            Template::MessagingRelayer => "/get_attestation",
         }
     }
 
@@ -42,6 +48,7 @@ impl Template {
             Template::Rust => "/sign_name",
             Template::Ts => "/sign",
             Template::Python => "/sign",
+            Template::MessagingRelayer => "/messages",
         }
     }
 
@@ -51,6 +58,7 @@ impl Template {
             Template::Rust => "/health",
             Template::Ts => "/health_check",
             Template::Python => "/health",
+            Template::MessagingRelayer => "/health",
         }
     }
 
@@ -65,6 +73,7 @@ impl Template {
             Template::Rust => "nautilus-rust",
             Template::Ts => "nautilus-ts",
             Template::Python => "nautilus-python",
+            Template::MessagingRelayer => "nautilus-messaging-relayer",
         }
     }
 
@@ -74,6 +83,7 @@ impl Template {
             Template::Rust => "verify_signed_name",
             Template::Ts => "verify_signed_data",
             Template::Python => "verify_signed_data",
+            Template::MessagingRelayer => "verify_signed_data",
         }
     }
 }
@@ -84,6 +94,7 @@ impl std::fmt::Display for Template {
             Template::Rust => write!(f, "rust"),
             Template::Ts => write!(f, "ts"),
             Template::Python => write!(f, "python"),
+            Template::MessagingRelayer => write!(f, "messaging-relayer"),
         }
     }
 }
@@ -164,6 +175,11 @@ pub fn detect_template(dir: Option<&Path>) -> Result<Template> {
     // Python template: has requirements.txt + app.py
     if base.join("requirements.txt").is_file() && base.join("app.py").is_file() {
         return Ok(Template::Python);
+    }
+
+    // Messaging relayer: has Cargo.toml + src/relayer/ directory
+    if base.join("Cargo.toml").is_file() && base.join("src").join("relayer").is_dir() {
+        return Ok(Template::MessagingRelayer);
     }
 
     // Rust template: has Cargo.toml (but not the CLI workspace — look for src/ with Rust files)
