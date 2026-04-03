@@ -552,13 +552,21 @@ mod implementation {
             .unwrap_or(&package_id)
             .to_string();
 
+        if template == crate::config::Template::MessagingRelayer {
+            anyhow::bail!(
+                "The messaging-relayer template does not expose a generic signing endpoint.\n\
+                 It signs authenticated delivery responses from POST /messages instead.\n\
+                 Verify the relayer template through the messaging E2E flow or a dedicated delivery-verification command."
+            );
+        }
+
         match template {
             crate::config::Template::Rust => verify_signature_rust(&args, &package_id, &type_pkg).await,
             crate::config::Template::Ts
-            | crate::config::Template::Python
-            | crate::config::Template::MessagingRelayer => {
+            | crate::config::Template::Python => {
                 verify_signature_ts(&args, &package_id, &type_pkg, template).await
             }
+            crate::config::Template::MessagingRelayer => unreachable!("handled above"),
         }
     }
 
