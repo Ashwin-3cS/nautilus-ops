@@ -496,7 +496,7 @@ cargo test -p nautilus-cli --features sui         # includes on-chain config tes
 | [nautilus-ts](https://github.com/Ashwin-3cS/nautilus-ts/) | TypeScript TEE template — Bun + argonaut framework. Fork of [unconfirmedlabs/nautilus-ts](https://github.com/unconfirmedlabs/nautilus-ts). Endpoints: `/sign`, `/attestation`, `/health_check` |
 | [nautilus-python](https://github.com/Ashwin-3cS/nautilus-python/) | Python TEE template — stdlib HTTP server with pynacl Ed25519 and direct NSM ioctl. Endpoints: `/sign`, `/attestation`, `/health` |
 | [nautilus-messaging-relayer](https://github.com/Ashwin-3cS/nautilus-messaging-relayer/) | Messaging relayer TEE template — Axum relayer adapted for Nautilus. Endpoints: `/messages`, `/get_attestation`, `/health`, `/health_check`, `/logs` |
-| [nautilus-memwal-relayer](https://github.com/Ashwin-3cS/nautilus-memwal-relayer/) | Memory wallet relayer TEE template — hybrid Rust + TypeScript (Node 22 + tsx) inside one enclave. Endpoints: `/api/recall`, `/api/remember`, `/api/analyze`, `/sponsor`, `/get_attestation`, `/health`, `/logs`. Config via single `MEMWAL_ENV_FILE` secret |
+| [nautilus-memwal-relayer](https://github.com/Ashwin-3cS/nautilus-memwal-relayer/) | Memwal relayer TEE template — hybrid Rust + TypeScript (Node 22 + tsx) inside one enclave. Endpoints: `/api/recall`, `/api/remember`, `/api/analyze`, `/sponsor`, `/get_attestation`, `/health`, `/logs`. Config via single `MEMWAL_ENV_FILE` secret |
 
 ## Security
 
