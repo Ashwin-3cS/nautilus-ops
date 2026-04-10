@@ -560,13 +560,22 @@ mod implementation {
             );
         }
 
+        if template == crate::config::Template::MemwalRelayer {
+            anyhow::bail!(
+                "The memwal-relayer template signs every protected API response (remember/recall) \
+                 via BCS-encoded IntentMessage, verifiable on-chain with verify_signed_payload.\n\
+                 Run the E2E test suite (src/relayer/scripts/test-e2e.ts) to exercise the full sign+verify flow."
+            );
+        }
+
         match template {
             crate::config::Template::Rust => verify_signature_rust(&args, &package_id, &type_pkg).await,
             crate::config::Template::Ts
             | crate::config::Template::Python => {
                 verify_signature_ts(&args, &package_id, &type_pkg, template).await
             }
-            crate::config::Template::MessagingRelayer => unreachable!("handled above"),
+            crate::config::Template::MessagingRelayer
+            | crate::config::Template::MemwalRelayer => unreachable!("handled above"),
         }
     }
 

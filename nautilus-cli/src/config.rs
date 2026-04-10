@@ -19,6 +19,10 @@ pub enum Template {
     #[serde(rename = "messaging-relayer")]
     #[clap(name = "messaging-relayer")]
     MessagingRelayer,
+    /// Hybrid Rust+TS memory wallet relayer (nautilus-memwal-relayer)
+    #[serde(rename = "memwal-relayer")]
+    #[clap(name = "memwal-relayer")]
+    MemwalRelayer,
 }
 
 impl Template {
@@ -29,6 +33,7 @@ impl Template {
             Template::Ts => 3000,
             Template::Python => 5000,
             Template::MessagingRelayer => 4000,
+            Template::MemwalRelayer => 4000,
         }
     }
 
@@ -39,6 +44,7 @@ impl Template {
             Template::Ts => "/attestation",
             Template::Python => "/attestation",
             Template::MessagingRelayer => "/get_attestation",
+            Template::MemwalRelayer => "/get_attestation",
         }
     }
 
@@ -49,6 +55,7 @@ impl Template {
             Template::Ts => "/sign",
             Template::Python => "/sign",
             Template::MessagingRelayer => "/messages",
+            Template::MemwalRelayer => "/api/recall",
         }
     }
 
@@ -59,6 +66,7 @@ impl Template {
             Template::Ts => "/health_check",
             Template::Python => "/health",
             Template::MessagingRelayer => "/health",
+            Template::MemwalRelayer => "/health",
         }
     }
 
@@ -74,6 +82,7 @@ impl Template {
             Template::Ts => "nautilus-ts",
             Template::Python => "nautilus-python",
             Template::MessagingRelayer => "nautilus-messaging-relayer",
+            Template::MemwalRelayer => "nautilus-memwal-relayer",
         }
     }
 
@@ -84,6 +93,7 @@ impl Template {
             Template::Ts => "verify_signed_data",
             Template::Python => "verify_signed_data",
             Template::MessagingRelayer => "verify_signed_data",
+            Template::MemwalRelayer => "verify_signed_payload",
         }
     }
 }
@@ -95,6 +105,7 @@ impl std::fmt::Display for Template {
             Template::Ts => write!(f, "ts"),
             Template::Python => write!(f, "python"),
             Template::MessagingRelayer => write!(f, "messaging-relayer"),
+            Template::MemwalRelayer => write!(f, "memwal-relayer"),
         }
     }
 }
@@ -175,6 +186,14 @@ pub fn detect_template(dir: Option<&Path>) -> Result<Template> {
     // Python template: has requirements.txt + app.py
     if base.join("requirements.txt").is_file() && base.join("app.py").is_file() {
         return Ok(Template::Python);
+    }
+
+    // Memwal relayer: has Cargo.toml + src/relayer/ + src/relayer/scripts/ (TS sidecar)
+    if base.join("Cargo.toml").is_file()
+        && base.join("src").join("relayer").is_dir()
+        && base.join("src").join("relayer").join("scripts").is_dir()
+    {
+        return Ok(Template::MemwalRelayer);
     }
 
     // Messaging relayer: has Cargo.toml + src/relayer/ directory

@@ -37,7 +37,7 @@ pub async fn run(args: AttestArgs, cli_template: Option<Template>) -> Result<()>
     println!("{}", "─".repeat(40).dimmed());
 
     match template {
-        Template::Rust | Template::MessagingRelayer => run_rust_attest(args).await,
+        Template::Rust | Template::MessagingRelayer | Template::MemwalRelayer => run_rust_attest(args).await,
         Template::Ts | Template::Python => run_ts_attest(args, template).await,
     }
 }
