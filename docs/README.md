@@ -7,6 +7,7 @@ Supports multiple template types:
 - **TypeScript** — [nautilus-ts](https://github.com/Ashwin-3cS/nautilus-ts/) (fork of [unconfirmedlabs/nautilus-ts](https://github.com/unconfirmedlabs/nautilus-ts)) using Bun + argonaut
 - **Python** — [nautilus-python](https://github.com/Ashwin-3cS/nautilus-python/) using pynacl + stdlib HTTP server
 - **Messaging Relayer** — [nautilus-messaging-relayer](https://github.com/Ashwin-3cS/nautilus-messaging-relayer/) adapting Sui Stack Messaging for Nautilus with attestation, signed delivery responses, membership sync, and Walrus archival
+- **MemWal Relayer** — [nautilus-memwal-relayer](https://github.com/Ashwin-3cS/nautilus-memwal-relayer/) hybrid Rust + TypeScript memory wallet TEE with BCS-signed recall/remember responses, pgvector embeddings, Walrus blob storage, Upstash Redis rate limiting, and SEAL decryption
 
 ## How It Works
 
@@ -51,18 +52,19 @@ Developer Machine                       EC2 Instance (Nitro-enabled)
 
 ## Supported Templates
 
-| Aspect | Rust Template | TS Template | Python Template | Messaging Relayer Template |
-|--------|--------------|-------------|-----------------|---------------------------|
-| Repo | [nautilus-rust](https://github.com/Ashwin-3cS/nautilus-rust/) | [nautilus-ts](https://github.com/Ashwin-3cS/nautilus-ts/) (fork of [unconfirmedlabs/nautilus-ts](https://github.com/unconfirmedlabs/nautilus-ts)) | [nautilus-python](https://github.com/Ashwin-3cS/nautilus-python/) | [nautilus-messaging-relayer](https://github.com/Ashwin-3cS/nautilus-messaging-relayer/) |
-| Default HTTP port | 4000 | 3000 | 5000 | 4000 |
-| Attestation endpoint | `GET /get_attestation` | `GET /attestation` | `GET /attestation` | `GET /get_attestation` |
-| Health endpoint | `GET /health` | `GET /health_check` | `GET /health` | `GET /health` |
-| Primary action | `POST /sign_name` | `POST /sign` | `POST /sign` | `POST /messages` |
-| Logs endpoint | `GET /logs?lines=N` | `GET /logs?lines=N` | `GET /logs?lines=N` | `GET /logs?lines=N` |
-| VSOCK bridge | socat (systemd services) | argonaut host binary | socat (systemd services) | socat + outbound host proxies |
-| Build | `docker build` + stagex `eif_build` | `make` (docker multi-stage, EIF built inside) | `make` (docker multi-stage, stagex `eif_build`) | `docker build` + stagex `eif_build` |
-| Background services | none | none | none | Sui membership sync + Walrus sync |
-| Auto-detection | `Cargo.toml` in project root | `argonaut/` dir + `package.json` | `requirements.txt` + `app.py` | `Cargo.toml` + `src/relayer/` |
+| Aspect | Rust Template | TS Template | Python Template | Messaging Relayer Template | MemWal Relayer Template |
+|--------|--------------|-------------|-----------------|---------------------------|------------------------|
+| Repo | [nautilus-rust](https://github.com/Ashwin-3cS/nautilus-rust/) | [nautilus-ts](https://github.com/Ashwin-3cS/nautilus-ts/) (fork of [unconfirmedlabs/nautilus-ts](https://github.com/unconfirmedlabs/nautilus-ts)) | [nautilus-python](https://github.com/Ashwin-3cS/nautilus-python/) | [nautilus-messaging-relayer](https://github.com/Ashwin-3cS/nautilus-messaging-relayer/) | [nautilus-memwal-relayer](https://github.com/Ashwin-3cS/nautilus-memwal-relayer/) |
+| Default HTTP port | 4000 | 3000 | 5000 | 4000 | 4000 |
+| Attestation endpoint | `GET /get_attestation` | `GET /attestation` | `GET /attestation` | `GET /get_attestation` | `GET /get_attestation` |
+| Health endpoint | `GET /health` | `GET /health_check` | `GET /health` | `GET /health` | `GET /health` |
+| Primary action | `POST /sign_name` | `POST /sign` | `POST /sign` | `POST /messages` | `POST /api/recall` |
+| Logs endpoint | `GET /logs?lines=N` | `GET /logs?lines=N` | `GET /logs?lines=N` | `GET /logs?lines=N` | `GET /logs?lines=N` |
+| VSOCK bridge | socat (systemd services) | argonaut host binary | socat (systemd services) | socat + outbound host proxies | socat + outbound host proxies + sidecar VSOCK |
+| Build | `docker build` + stagex `eif_build` | `make` (docker multi-stage, EIF built inside) | `make` (docker multi-stage, stagex `eif_build`) | `docker build` + stagex `eif_build` | `docker build` + stagex `eif_build` (Node 22 + tsx sidecar) |
+| Background services | none | none | none | Sui membership sync + Walrus sync | TypeScript sidecar (Express + @mysten/walrus) managed by Rust server |
+| Config delivery | baked in env | baked in env | baked in env | per-var VSOCK:7000 | single `MEMWAL_ENV_FILE` secret → VSOCK:7000 |
+| Auto-detection | `Cargo.toml` in project root | `argonaut/` dir + `package.json` | `requirements.txt` + `app.py` | `Cargo.toml` + `src/relayer/` | `Cargo.toml` + `src/relayer/scripts/` |
 
 ## Trust Chain
 
@@ -118,6 +120,7 @@ Your EC2 instance must allow inbound traffic on the port your template uses. Add
 | TypeScript | 3000 | TCP |
 | Python | 5000 | TCP |
 | Messaging Relayer | 4000 | TCP |
+| MemWal Relayer | 4000 | TCP |
 
 Only open the port for the template you're using. Restrict the source IP to your machine or CI runner if possible.
 
@@ -203,6 +206,7 @@ By default (without the `nsm` feature), all NSM calls return deterministic mock 
 | Rust | [nautilus-rust](https://github.com/Ashwin-3cS/nautilus-rust/) | Axum sign-server with `/sign_name`, `/get_attestation`, `/health`. Uses `nautilus-enclave` directly |
 | TypeScript | [nautilus-ts](https://github.com/Ashwin-3cS/nautilus-ts/) | Bun + argonaut framework with `/sign`, `/attestation`, `/health_check`. Fork of [unconfirmedlabs/nautilus-ts](https://github.com/unconfirmedlabs/nautilus-ts) |
 | Python | [nautilus-python](https://github.com/Ashwin-3cS/nautilus-python/) | stdlib HTTP server with `/sign`, `/attestation`, `/health`. Uses pynacl for Ed25519, direct NSM ioctl for attestation |
+| MemWal Relayer | [nautilus-memwal-relayer](https://github.com/Ashwin-3cS/nautilus-memwal-relayer/) | Hybrid Rust + TypeScript memory wallet. Rust server spawns a TypeScript/Express sidecar inside the enclave. Endpoints: `/api/recall`, `/api/remember`, `/get_attestation`, `/health`, `/logs`. BCS-signed responses verifiable via `verify_signed_payload` on-chain |
 
 ---
 
@@ -217,7 +221,7 @@ Once you have a TEE app running inside an enclave, use the CLI to manage the ful
 ```bash
 nautilus init --template python my-enclave-app
 # Clones the template from GitHub, writes .nautilus.toml, generates CI workflow
-# Supported templates: rust, ts, python, messaging-relayer
+# Supported templates: rust, ts, python, messaging-relayer, memwal-relayer
 
 cd my-enclave-app
 ```
@@ -242,11 +246,16 @@ nautilus build --template ts
 ```bash
 nautilus init-ci --cpu-count 2 --memory-mib 4096 -f Containerfile
 # Creates .github/workflows/nautilus-deploy.yml
-# Template is auto-detected (Cargo.toml + src/relayer -> messaging-relayer, Cargo.toml -> Rust, argonaut/ + package.json -> TS, requirements.txt + app.py -> Python)
+# Template is auto-detected:
+#   Cargo.toml + src/relayer/scripts/ -> memwal-relayer
+#   Cargo.toml + src/relayer/          -> messaging-relayer
+#   Cargo.toml                         -> rust
+#   argonaut/ + package.json           -> ts
+#   requirements.txt + app.py          -> python
 
 # Set GitHub secrets: TEE_EC2_HOST, TEE_EC2_USER, TEE_EC2_SSH_KEY
 # Messaging-relayer also needs: RELAYER_SUI_RPC_URL, RELAYER_GROUPS_PACKAGE_ID, RELAYER_WALRUS_PUBLISHER_URL, RELAYER_WALRUS_AGGREGATOR_URL
-# Optional for faster Walrus testing: RELAYER_WALRUS_SYNC_INTERVAL_SECS, RELAYER_WALRUS_SYNC_MESSAGE_THRESHOLD
+# MemWal-relayer needs: MEMWAL_ENV_FILE (full contents of .env — all config in one secret)
 # Push to main -> enclave deploys automatically
 ```
 
@@ -358,7 +367,7 @@ After steps 1–6, any dApp on Sui can call `verify_signature()` or `verify_sign
 | `nautilus register-enclave` | Register enclave on-chain with attestation | `--features sui`, Sui CLI |
 | `nautilus verify-signature` | Verify an enclave signature on-chain | `--features sui`, Sui CLI |
 
-Run `nautilus <command> --help` for full flag details. Use `--template rust|ts|python|messaging-relayer` to override auto-detection (required for `init`, optional for other commands).
+Run `nautilus <command> --help` for full flag details. Use `--template rust|ts|python|messaging-relayer|memwal-relayer` to override auto-detection (required for `init`, optional for other commands).
 
 ## Configuration
 
@@ -487,6 +496,7 @@ cargo test -p nautilus-cli --features sui         # includes on-chain config tes
 | [nautilus-ts](https://github.com/Ashwin-3cS/nautilus-ts/) | TypeScript TEE template — Bun + argonaut framework. Fork of [unconfirmedlabs/nautilus-ts](https://github.com/unconfirmedlabs/nautilus-ts). Endpoints: `/sign`, `/attestation`, `/health_check` |
 | [nautilus-python](https://github.com/Ashwin-3cS/nautilus-python/) | Python TEE template — stdlib HTTP server with pynacl Ed25519 and direct NSM ioctl. Endpoints: `/sign`, `/attestation`, `/health` |
 | [nautilus-messaging-relayer](https://github.com/Ashwin-3cS/nautilus-messaging-relayer/) | Messaging relayer TEE template — Axum relayer adapted for Nautilus. Endpoints: `/messages`, `/get_attestation`, `/health`, `/health_check`, `/logs` |
+| [nautilus-memwal-relayer](https://github.com/Ashwin-3cS/nautilus-memwal-relayer/) | Memory wallet relayer TEE template — hybrid Rust + TypeScript (Node 22 + tsx) inside one enclave. Endpoints: `/api/recall`, `/api/remember`, `/api/analyze`, `/sponsor`, `/get_attestation`, `/health`, `/logs`. Config via single `MEMWAL_ENV_FILE` secret |
 
 ## Security
 
