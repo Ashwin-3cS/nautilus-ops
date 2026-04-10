@@ -206,7 +206,7 @@ By default (without the `nsm` feature), all NSM calls return deterministic mock 
 | Rust | [nautilus-rust](https://github.com/Ashwin-3cS/nautilus-rust/) | Axum sign-server with `/sign_name`, `/get_attestation`, `/health`. Uses `nautilus-enclave` directly |
 | TypeScript | [nautilus-ts](https://github.com/Ashwin-3cS/nautilus-ts/) | Bun + argonaut framework with `/sign`, `/attestation`, `/health_check`. Fork of [unconfirmedlabs/nautilus-ts](https://github.com/unconfirmedlabs/nautilus-ts) |
 | Python | [nautilus-python](https://github.com/Ashwin-3cS/nautilus-python/) | stdlib HTTP server with `/sign`, `/attestation`, `/health`. Uses pynacl for Ed25519, direct NSM ioctl for attestation |
-| MemWal Relayer | [nautilus-memwal-relayer](https://github.com/Ashwin-3cS/nautilus-memwal-relayer/) | Hybrid Rust + TypeScript memory wallet. Rust server spawns a TypeScript/Express sidecar inside the enclave. Endpoints: `/api/recall`, `/api/remember`, `/get_attestation`, `/health`, `/logs`. BCS-signed responses verifiable via `verify_signed_payload` on-chain |
+| MemWal Relayer | [nautilus-memwal-relayer](https://github.com/Ashwin-3cS/nautilus-memwal-relayer/) | Hybrid Rust + TypeScript Memwal Relayer. Rust server spawns a TypeScript/Express sidecar inside the enclave. Endpoints: `/api/recall`, `/api/remember`, `/get_attestation`, `/health`, `/logs`. BCS-signed responses verifiable via `verify_signed_payload` on-chain |
 
 ---
 
