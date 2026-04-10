@@ -1,5 +1,6 @@
 target
 contracts/nautilus/build
+.claude/
 
 
 # docs
