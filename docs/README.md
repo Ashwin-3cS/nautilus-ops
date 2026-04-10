@@ -7,7 +7,7 @@ Supports multiple template types:
 - **TypeScript** — [nautilus-ts](https://github.com/Ashwin-3cS/nautilus-ts/) (fork of [unconfirmedlabs/nautilus-ts](https://github.com/unconfirmedlabs/nautilus-ts)) using Bun + argonaut
 - **Python** — [nautilus-python](https://github.com/Ashwin-3cS/nautilus-python/) using pynacl + stdlib HTTP server
 - **Messaging Relayer** — [nautilus-messaging-relayer](https://github.com/Ashwin-3cS/nautilus-messaging-relayer/) adapting Sui Stack Messaging for Nautilus with attestation, signed delivery responses, membership sync, and Walrus archival
-- **MemWal Relayer** — [nautilus-memwal-relayer](https://github.com/Ashwin-3cS/nautilus-memwal-relayer/) hybrid Rust + TypeScript memory wallet TEE with BCS-signed recall/remember responses, pgvector embeddings, Walrus blob storage, Upstash Redis rate limiting, and SEAL decryption
+- **MemWal Relayer** — [nautilus-memwal-relayer](https://github.com/Ashwin-3cS/nautilus-memwal-relayer/) hybrid Rust + TypeScript Memwal relayer TEE with BCS-signed recall/remember responses, pgvector embeddings, Walrus blob storage, Upstash Redis rate limiting, and SEAL decryption
 
 ## How It Works
 
