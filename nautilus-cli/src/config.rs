@@ -19,7 +19,7 @@ pub enum Template {
     #[serde(rename = "messaging-relayer")]
     #[clap(name = "messaging-relayer")]
     MessagingRelayer,
-    /// Hybrid Rust+TS memory wallet relayer (nautilus-memwal-relayer)
+    /// Hybrid Rust+TS MemWal relayer — SEAL-encrypted agent memories on Walrus (nautilus-memwal-relayer)
     #[serde(rename = "memwal-relayer")]
     #[clap(name = "memwal-relayer")]
     MemwalRelayer,
